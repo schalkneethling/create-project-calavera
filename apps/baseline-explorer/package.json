@@ -7,13 +7,13 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "browsers:install": "playwright install chromium",
-    "test": "playwright test"
+    "test": "node --test test/*.test.mjs && playwright test"
   },
   "dependencies": {
     "@schalkneethling/calavera-baseline-core": "workspace:^"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",
-    "vite": "^8.3.6"
+    "vite": "^8.3.8"
   }
 }

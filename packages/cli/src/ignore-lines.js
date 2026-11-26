@@ -5,7 +5,7 @@
 // lines as one marked block per integration and never touches a line outside a block. The
 // `.htmlvalidateignore` lines go into the managed file, which apply already writes as a whole.
 
-import { findBlock, indent, markers } from "./utils/marked-block.js";
+import { UNRECORDED_BLOCK, findBlock, indent, markers } from "./utils/marked-block.js";
 
 export const GITIGNORE_PATH = ".gitignore";
 export const HTML_VALIDATE_IGNORE_PATH = ".htmlvalidateignore";
@@ -75,7 +75,58 @@ function blockText(integration, lines, cr) {
 }
 
 /**
- * Plans the integrations' blocks in `.gitignore`. A recorded block whose integration no longer
+ * The `.gitignore` text without the block `found` locates, both markers included. Every line
+ * outside the block keeps its bytes. Apply removes the block of an integration the recipe no longer
+ * selects this way, and `eject` removes the artifact cache block (ADR-0017).
+ *
+ * @param {import("./utils/marked-block.js").FoundBlock} found A block `findBlock` found.
+ * @returns {string}
+ */
+export function withoutGitignoreBlock(found) {
+  const after = found.lines.slice(found.endIndex + 1);
+  // When the end marker is the file's last line and has no line break, the line before the block
+  // still owns the line break that separated the two, so it keeps it.
+  if (after.length === 0 && found.startIndex > 0) after.push("");
+  return [...found.lines.slice(0, found.startIndex), ...after].join("\n");
+}
+
+/**
+ * What `contents` holds of a block whose contents are fixed text, such as the `ejected` block
+ * (ADR-0017, Amendment 5). `complete` and `edited` have paired markers, and `edited` holds anything
+ * other than `lines`. `broken` has an unpaired, repeated, out-of-order, or changed marker, so the
+ * block's end is unknown. `found` locates a block with paired markers. Nothing here keeps a line of
+ * the file in a reason, because the file is the person's and can hold anything.
+ *
+ * @param {string} contents
+ * @param {string} owner
+ * @param {string[]} lines
+ * @returns {{ status: "absent" | "broken" } | { status: "complete" | "edited", found: import("./utils/marked-block.js").FoundBlock }}
+ */
+export function fixedBlockIn(contents, owner, lines) {
+  const found = findBlock(GITIGNORE_PATH, contents, owner);
+  if ("reason" in found) return { status: "broken" };
+  if (found.startIndex === -1) return { status: "absent" };
+  return { status: found.current === lines.join("\n") ? "complete" : "edited", found };
+}
+
+/**
+ * Why `command` refuses an edited or broken fixed block, and what the person does about it, in
+ * words that name the block and quote only Calavera's own markers.
+ *
+ * @param {string} owner
+ * @param {"edited" | "broken"} status
+ * @param {string} command
+ */
+export function fixedBlockProblem(owner, status, command) {
+  const { start, end } = markers(owner);
+  return status === "edited"
+    ? `${GITIGNORE_PATH}: the Calavera block for ${owner} holds lines other than the one Calavera writes there, and Calavera changes no line you wrote. Move your own lines out of the block, and run ${command} again.`
+    : `${GITIGNORE_PATH}: the Calavera block for ${owner} has markers that are unpaired, repeated, out of order, or changed, so Calavera cannot tell where the block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove the markers and the lines between them, and run ${command} again.`;
+}
+
+/**
+ * Plans the integrations' blocks in `.gitignore`. A fixed block in `remove` goes first, while it
+ * holds its fixed lines, whatever the records say. A recorded block whose integration no longer
  * declares lines is removed while it still holds the recorded lines. A declared block is appended
  * when it is missing, kept when it holds the declared lines, and replaced when it holds the
  * recorded lines. Any other block text, and a broken marker pair, is a conflict, and the planner
@@ -87,10 +138,20 @@ function blockText(integration, lines, cr) {
  * @param {IgnoreLines[]} options.records The blocks apply wrote last, from the state record.
  * @param {string} [options.command] The command a conflict tells the person to run again once they
  *   have resolved it: `apply`, or the `artifacts` command that writes the artifact cache block (#960).
+ * @param {IgnoreLines[]} [options.remove] Blocks of fixed text that no record covers and that this
+ *   run removes: the `ejected` block, which apply removes because it manages the project again
+ *   (ADR-0017, Amendment 5). An edited one, or one with a broken marker, is a conflict whose reason
+ *   quotes none of its lines.
  * @returns {{ contents: string | undefined, type: "write" | "update" | "unchanged" | undefined, changes: IgnoreChange[], records: IgnoreLines[] }}
  *   `type` is undefined when the plan touches no block, so apply reports nothing for the file.
  */
-export function planGitignoreBlocks({ contents, declared, records, command = "apply" }) {
+export function planGitignoreBlocks({
+  contents,
+  declared,
+  records,
+  command = "apply",
+  remove = [],
+}) {
   for (const { integration, lines } of declared) {
     for (const line of lines) {
       const problem = ignoreLineProblem(line);
@@ -111,6 +172,18 @@ export function planGitignoreBlocks({ contents, declared, records, command = "ap
   let text = contents;
   const declaredIds = new Set(declared.map(({ integration }) => integration));
 
+  for (const { integration, lines } of remove) {
+    if (text === undefined) continue;
+    const block = fixedBlockIn(text, integration, lines);
+    if (block.status === "absent") continue;
+    if (block.status !== "complete") {
+      conflicts.push(fixedBlockProblem(integration, block.status, command));
+      continue;
+    }
+    text = withoutGitignoreBlock(block.found);
+    changes.push({ path: GITIGNORE_PATH, integration, type: "update", removedLines: lines });
+  }
+
   for (const record of records) {
     if (declaredIds.has(record.integration) || text === undefined) continue;
     const found = findBlock(GITIGNORE_PATH, text, record.integration, command);
@@ -127,11 +200,7 @@ export function planGitignoreBlocks({ contents, declared, records, command = "ap
       );
       continue;
     }
-    const after = found.lines.slice(found.endIndex + 1);
-    // When the end marker is the file's last line and has no line break, the line before the block
-    // still owns the line break that separated the two, so it keeps it.
-    if (after.length === 0 && found.startIndex > 0) after.push("");
-    text = [...found.lines.slice(0, found.startIndex), ...after].join("\n");
+    text = withoutGitignoreBlock(found);
     changes.push({
       path: GITIGNORE_PATH,
       integration: record.integration,
@@ -186,7 +255,7 @@ export function planGitignoreBlocks({ contents, declared, records, command = "ap
       });
     } else {
       conflicts.push(
-        `${GITIGNORE_PATH}: the Calavera block for ${integration} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded.lines.join("\n"))}\n`}The file now holds:\n${indent(found.current)}\nCalavera would write:\n${indent(wanted)}\nTo let Calavera write it, remove the block, both markers included, and run ${command} again.`,
+        `${GITIGNORE_PATH}: the Calavera block for ${integration} ${recorded === undefined ? UNRECORDED_BLOCK : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded.lines.join("\n"))}\n`}The file now holds:\n${indent(found.current)}\nCalavera would write:\n${indent(wanted)}\nTo let Calavera write it, remove the block, both markers included, and run ${command} again.`,
       );
       continue;
     }

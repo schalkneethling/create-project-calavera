@@ -2,7 +2,7 @@
 // only at the repository root, so applying the integration from a workspace
 // member is refused with a hard stop, before any file is planned or written.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -209,10 +209,12 @@ test("CLI apply and apply --dry-run from a workspace member refuse github-reposi
   ]) {
     await assert.rejects(
       execFileAsync(process.execPath, [cliPath, ...args], { cwd: repository.member }),
-      (/** @type {{ code: number, stderr: string }} */ error) => {
+      (/** @type {{ code: number, stdout: string }} */ error) => {
         assert.equal(error.code, 1, args.join(" "));
-        assert.match(error.stderr, /github-repository-controls applies at the repository root/);
-        assert.ok(error.stderr.includes(`the repository root is ${repository.root}.`));
+        // With --json, the refusal is a JSON result (#1227).
+        const { message } = JSON.parse(error.stdout).issues[0];
+        assert.match(message, /github-repository-controls applies at the repository root/);
+        assert.ok(message.includes(`the repository root is ${repository.root}.`));
         return true;
       },
     );
@@ -222,17 +224,22 @@ test("CLI apply and apply --dry-run from a workspace member refuse github-reposi
 });
 
 /**
- * The issues `doctor --json` reports in `cwd`.
+ * The issues `doctor --json` reports in `cwd`. doctor exits 1 when it reports an error (#1030), so
+ * the exit code is checked against `ok` instead of being treated as a failure.
  *
  * @param {string} cwd
  * @returns {Promise<{ ok: boolean, issues: { level: string, message: string }[] }>}
  */
 async function doctorReport(cwd) {
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
+  const { status, stdout, stderr } = spawnSync(process.execPath, [cliPath, "doctor", "--json"], {
     cwd,
+    encoding: "utf8",
     env: { ...process.env, NO_COLOR: "1" },
   });
-  return JSON.parse(stdout);
+  assert.ok(status === 0 || status === 1, `doctor exited ${status}\n${stderr}`);
+  const report = JSON.parse(stdout);
+  assert.equal(status, report.ok ? 0 : 1, `doctor exited ${status}\n${stderr}`);
+  return report;
 }
 
 // #997: doctor names apply's refusal instead of only the root-only integration's missing files.
@@ -271,7 +278,9 @@ for (const packageManager of ["npm", "pnpm"]) {
 
     assert.equal(report.ok, false);
     assert.deepEqual(
-      report.issues.filter(({ level }) => level === "error"),
+      report.issues
+        .filter(({ level }) => level === "error")
+        .map(({ level, message }) => ({ level, message })),
       [{ level: "error", message: applyRefusal }],
     );
   });
@@ -306,6 +315,112 @@ test("doctor reads package.json only for a root-only integration outside the rep
   const report = await doctorReport(repository.member);
 
   assert.equal(report.ok, true, JSON.stringify(report.issues));
+});
+
+// #1031: apply's second member refusal, for an artifact that writes Git hooks. doctor reports it
+// with apply's own message, naming the same package manager's command as apply.
+const gitHookArtifactId = "skill-protected-branch-guard";
+
+/**
+ * The message apply stops with for `recipe` in `cwd`.
+ *
+ * @param {string} cwd
+ * @param {Record<string, unknown>} recipe
+ * @returns {Promise<string>}
+ */
+function applyRefusalIn(cwd, recipe) {
+  return inDirectory(cwd, () =>
+    applyRecipeObject(recipe, { json: true, dryRun: true, assumeYes: true }).then(
+      () => assert.fail("apply did not refuse the recipe"),
+      (/** @type {Error} */ error) => error.message,
+    ),
+  );
+}
+
+/** @param {string} packageManager */
+function gitHookRecipe(packageManager) {
+  return {
+    ...buildRecipe("minimal", ["editorconfig"], packageManager),
+    ai: [{ id: gitHookArtifactId }],
+  };
+}
+
+for (const packageManager of ["npm", "pnpm"]) {
+  test(`doctor from a workspace member reports apply's refusal of a Git-hook artifact as an error (${packageManager})`, async () => {
+    await using repository = await createRepository();
+    const recipe = gitHookRecipe(packageManager);
+    await writeFile(
+      join(repository.member, "calavera.config.json"),
+      `${JSON.stringify(recipe, null, 2)}\n`,
+    );
+    const applyRefusal = await applyRefusalIn(repository.member, recipe);
+    assert.ok(
+      applyRefusal.startsWith(
+        `${gitHookArtifactId} applies at the repository root, not in a workspace member. It writes Git hooks`,
+      ),
+      applyRefusal,
+    );
+    assert.ok(
+      applyRefusal.includes(
+        packageManager === "pnpm"
+          ? "pnpm dlx create-project-calavera apply --dry-run"
+          : "npm create project-calavera apply -- --dry-run",
+      ),
+      applyRefusal,
+    );
+
+    const report = await doctorReport(repository.member);
+
+    assert.equal(report.ok, false);
+    assert.deepEqual(
+      report.issues
+        .filter(({ level }) => level === "error")
+        .map(({ level, message }) => ({ level, message })),
+      [{ level: "error", message: applyRefusal }],
+    );
+  });
+}
+
+test("doctor at the repository root does not report the Git-hook refusal", async () => {
+  await using repository = await createRepository();
+  await writeFile(
+    join(repository.root, "calavera.config.json"),
+    `${JSON.stringify(gitHookRecipe("npm"), null, 2)}\n`,
+  );
+
+  const report = await doctorReport(repository.root);
+
+  assert.equal(report.ok, true, JSON.stringify(report.issues));
+  assert.ok(
+    report.issues.every(({ message }) => !message.includes("applies at the repository root")),
+    JSON.stringify(report.issues),
+  );
+});
+
+test("doctor from a workspace member reports both refusals when the recipe selects a root-only integration and a Git-hook artifact", async () => {
+  await using repository = await createRepository();
+  const recipe = { ...repositoryControlsRecipe(), ai: [{ id: gitHookArtifactId }] };
+  await writeFile(
+    join(repository.member, "calavera.config.json"),
+    `${JSON.stringify(recipe, null, 2)}\n`,
+  );
+  // apply stops at the first refusal, so each message comes from a recipe that selects only one.
+  const rootOnlyRefusal = await applyRefusalIn(repository.member, repositoryControlsRecipe());
+  const gitHookRefusal = await applyRefusalIn(repository.member, gitHookRecipe("npm"));
+  assert.equal(await applyRefusalIn(repository.member, recipe), rootOnlyRefusal);
+
+  const report = await doctorReport(repository.member);
+
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.issues
+      .filter(({ level }) => level === "error")
+      .map(({ level, message }) => ({ level, message })),
+    [
+      { level: "error", message: rootOnlyRefusal },
+      { level: "error", message: gitHookRefusal },
+    ],
+  );
 });
 
 test("dry_run_apply at the repository root still plans the repository-controls files", async () => {

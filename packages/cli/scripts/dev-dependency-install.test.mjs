@@ -9,7 +9,7 @@
 // or a stand-in package manager first on PATH, records what apply ran.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -609,6 +609,53 @@ for (const variant of unusableVitePlus) {
   });
 }
 
+// #1130: the vp bin check uses `isPathInside`. A bin in a sibling folder whose name extends
+// vite-plus is outside, even when the file exists, and the package folder itself is no bin.
+for (const [bin, why] of [
+  ["../vite-plus-evil/vp", "in a sibling folder whose name extends vite-plus"],
+  [".", "the package folder itself"],
+  ["../vite-plus-evil/vp/", "outside, written with a trailing separator"],
+]) {
+  test(`apply stops before writing anything when the vp bin is ${why}`, async () => {
+    await using workspace = await managedProject();
+    await writeVitePlusStub(workspace.project, {
+      logPath: workspace.vpLog,
+      manifest: json({ name: "vite-plus", bin: { vp: bin } }),
+    });
+    await mkdir(join(workspace.project, "node_modules/vite-plus-evil"), { recursive: true });
+    await writeFile(join(workspace.project, "node_modules/vite-plus-evil/vp"), "");
+
+    await inDirectory(workspace.project, () =>
+      assert.rejects(applyRecipeObject(recipe, { json: true, assumeYes: true }), (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /declares a vp bin outside the vite-plus package/);
+        return true;
+      }),
+    );
+    assert.equal(await exists(join(workspace.project, "knip.json")), false);
+    assert.deepEqual(await readStubInvocations(workspace.vpLog), []);
+  });
+}
+
+// #1130: a bin whose folder name only starts with `..` is inside the package, under the precise
+// rule the owner chose on #1026, so apply runs it.
+test("apply runs a vp bin in a package folder whose name starts with ..", async () => {
+  await using workspace = await managedProject({ vitePlus: {} });
+  const packageDirectory = join(workspace.project, "node_modules/vite-plus");
+  await rename(join(packageDirectory, "bin"), join(packageDirectory, "..bin"));
+  await writeFile(
+    join(packageDirectory, "package.json"),
+    json({ name: "vite-plus", bin: { vp: "./..bin/vp" } }),
+  );
+
+  await inDirectory(workspace.project, () =>
+    applyRecipeObject(recipe, { json: true, assumeYes: true }),
+  );
+  assert.deepEqual(await readStubInvocations(workspace.vpLog), [
+    { argv: ["add", "-D", "knip"], cwd: workspace.project },
+  ]);
+});
+
 test("a failed vp add -D stops the spinner, exits non-zero, and says what was written and how to finish", async () => {
   await using workspace = await managedProject({ vitePlus: { exitCode: 3 } });
 
@@ -705,6 +752,26 @@ test("formatCommand quotes every argument a POSIX shell would not read as one pl
   assert.equal(
     formatCommand(["pnpm", ["add", "--save-dev", "@scope/pkg"]], "linux"),
     "pnpm add --save-dev @scope/pkg",
+  );
+});
+
+// Issue #1026: on POSIX shells formatCommand quotes through quoteShellToken, so it follows the
+// #1037 rules: a leading `=` (zsh's EQUALS option), and `==` or `:=` (zsh's MAGIC_EQUAL_SUBST) are
+// quoted, although they hold only plain-word characters. A `~` was quoted before #1026 as well; its
+// case guards that behavior.
+test("formatCommand quotes the tokens zsh and bash would expand, as quoteShellToken does", () => {
+  for (const platform of ["linux", "darwin"]) {
+    assert.equal(
+      formatCommand(["npm", ["install", "=ls", "--with==x", "PATH=a:=b", "~/vp"]], platform),
+      "npm install '=ls' '--with==x' 'PATH=a:=b' '~/vp'",
+    );
+  }
+});
+
+test("formatCommand on Windows keeps its own quoting, which leaves a leading `=` as is", () => {
+  assert.equal(
+    formatCommand(["npm", ["install", "=ls", "a b", 'say "hi"']], "win32"),
+    'npm install =ls "a b" "say \\"hi\\""',
   );
 });
 

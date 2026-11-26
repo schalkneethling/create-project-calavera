@@ -253,8 +253,13 @@ async function runFlow({ directory, integrations, quality, guard }, root) {
   // claude-code` calls and the project's own vp fmt it formats with, so the flow
   // starts from the file the bootstrap wrote. copyReleaseFixture installs that vp.
   await inDirectory(project, () =>
-    writeMcpServersJsonConfig(".mcp.json", bootstrapLaunchCommand, false, [], () =>
-      loadProjectFormatter(project, "managed"),
+    writeMcpServersJsonConfig(
+      ".mcp.json",
+      bootstrapLaunchCommand,
+      [bootstrapLaunchCommand],
+      false,
+      [],
+      () => loadProjectFormatter(project, "managed"),
     ),
   );
   const before = await snapshotTree(root);
@@ -670,10 +675,10 @@ for (const flowCase of rootCases) {
 }
 
 for (const flowCase of cases) {
-  test(`vp create ${flowCase.name}: Given the case after apply, when knip.json is read, then its ignore equals [".agents/**"]`, async () => {
+  test(`vp create ${flowCase.name}: Given the case after apply, when knip.json is read, then its ignore equals [".agents/**", ".calavera/**"]`, async () => {
     await afterApply(flowCase, async ({ project }) => {
       const knip = JSON.parse(await readFile(join(project, "knip.json"), "utf8"));
-      assert.deepEqual(knip.ignore, [".agents/**"]);
+      assert.deepEqual(knip.ignore, [".agents/**", ".calavera/**"]);
     });
   });
 

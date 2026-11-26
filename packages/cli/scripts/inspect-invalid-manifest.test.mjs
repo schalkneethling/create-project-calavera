@@ -12,13 +12,8 @@ import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 
-const parseError = (() => {
-  try {
-    JSON.parse("{");
-  } catch (error) {
-    return error.message;
-  }
-})();
+// #1157: what is wrong, and where, never JSON.parse's message, which quotes the file.
+const parseError = "CloseBraceExpected at line 1, column 2";
 
 /**
  * Runs `callback` in a temporary project with the given package.json and two lockfiles.

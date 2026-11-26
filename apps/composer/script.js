@@ -7,12 +7,13 @@ import {
   listIntegrationOptions,
   listIntegrationsResponse,
   listProfilesResponse,
-  packageManagerIdsForRecipe,
   profileCatalog,
   profileDefaults,
   profileIdsForRecipe,
   recipeToolDescriptions,
   recipeToolInputDescriptions,
+  validateRecipe,
+  validateRecipeCompositionInput,
   validateRecipeResponse,
 } from "../../packages/cli/src/recipe.js";
 import { DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
@@ -40,7 +41,9 @@ import {
   composerNextCommands,
   composerRecipe,
 } from "./recipe-builder.js";
-import { releaseEnvironmentInputSchema } from "./repository-controls-input-schema.js";
+import { checkToolInput } from "./tool-input.js";
+// Generated from the core's shared tool definitions when Vite builds the page (webmcp-schemas-plugin.js).
+import webMcpSchemas from "virtual:webmcp-tool-schemas";
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
@@ -68,7 +71,6 @@ const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const stickyBarProfile = document.querySelector("#sticky-bar-profile");
 const stickyBarCounts = document.querySelector("#sticky-bar-counts");
 const profiles = profileIdsForRecipe();
-const packageManagers = packageManagerIdsForRecipe();
 const allAiArtifactOptions = listAiArtifactOptions();
 const NEW_PROJECT_CLI_RANGE = ">=4.0.0";
 const statusChipClasses = {
@@ -801,418 +803,245 @@ function revealWebMcpBanner() {
   webMcpBanner.hidden = false;
 }
 
-function registerWebMcpTools() {
-  if (!navigator.modelContext?.registerTool) {
+// download_recipe reads only recipe and ignores any other field, so the schema does not refuse one.
+const downloadRecipeInputSchema = {
+  type: "object",
+  properties: {
+    recipe: {
+      type: "object",
+      description: recipeToolInputDescriptions.optionalDownloadRecipe,
+    },
+  },
+};
+
+/**
+ * Registers a WebMCP tool whose execute function first checks its input against the inputSchema it
+ * registers (#1176). The browser does not check the input against the schema before it calls
+ * execute, so this is the only check. `coreCheck` runs the core's own check on a refused input, so
+ * the refusal carries the core's message. `registerTool` returns a promise that rejects when the
+ * browser refuses the tool, for example a duplicate name (WebMCP specification, section 4.2). The
+ * rejection is logged with the tool's name, and the returned promise resolves to whether the tool
+ * was registered.
+ *
+ * @param {{ inputSchema: Record<string, unknown>, execute: (input: any, options?: unknown) => unknown, coreCheck?: (input: any) => unknown, [key: string]: unknown }} tool
+ */
+async function registerCheckedTool({ coreCheck, execute, ...tool }) {
+  try {
+    await document.modelContext.registerTool({
+      ...tool,
+      // The second argument carries the call's AbortSignal (ToolExecuteCallbackOptions).
+      execute: async (input, options) =>
+        execute(checkToolInput(tool.inputSchema, input, coreCheck), options),
+    });
+    return true;
+  } catch (error) {
+    console.info(`WebMCP did not register ${tool.name}.`, error);
+    return false;
+  }
+}
+
+// The WebMCP specification (section 4.1, "Extensions to Document") and Chrome's imperative API
+// guide expose the tool registry as document.modelContext; neither documents navigator.modelContext.
+async function registerWebMcpTools() {
+  if (!document.modelContext?.registerTool) {
     return;
   }
 
   try {
-    navigator.modelContext.registerTool({
-      name: "list_profiles",
-      description: recipeToolDescriptions.list_profiles,
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async () => {
-        const response = listProfilesResponse({ browser: true });
-        const supportedIds = new Set(
-          filterIntegrationsForCli(listIntegrationOptions(), cliCompatibility.version).map(
-            ({ id }) => id,
-          ),
-        );
-
-        return {
-          ...response,
-          profiles: response.profiles.map((profile) => ({
-            ...profile,
-            defaultIntegrations: profile.defaultIntegrations.filter((id) => supportedIds.has(id)),
-          })),
-        };
-      },
-    });
-
-    navigator.modelContext.registerTool({
-      name: "list_integrations",
-      description: recipeToolDescriptions.list_integrations,
-      inputSchema: {
-        type: "object",
-        properties: {
-          profile: {
-            type: "string",
-            enum: profiles,
-            description: recipeToolInputDescriptions.profileFilter,
-          },
+    // Each registration settles on its own: the browser rejects one tool (a duplicate name, a
+    // schema it cannot serialize) without touching the others, so one rejection does not stop the
+    // rest. ADR-0018 Decision 2: the input and output schemas of the tools the MCP server shares
+    // come from one definition in the core, through webMcpSchemas.
+    const registered = await Promise.all([
+      registerCheckedTool({
+        name: "list_profiles",
+        description: recipeToolDescriptions.list_profiles,
+        ...webMcpSchemas.list_profiles,
+        annotations: {
+          readOnlyHint: true,
+          untrustedContentHint: false,
         },
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async (input) => {
-        const response = listIntegrationsResponse(input);
-        return integrationResponseForCli(response, cliCompatibility.version);
-      },
-    });
-
-    navigator.modelContext.registerTool({
-      name: "describe_integration",
-      description: recipeToolDescriptions.describe_integration,
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: {
-            type: "string",
-            description: recipeToolInputDescriptions.integrationId,
-          },
-        },
-        required: ["id"],
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async (input) => {
-        const integration = describeIntegrationResponse(input.id);
-        const [supportedIntegration] = filterIntegrationsForCli(
-          [integration],
-          cliCompatibility.version,
-        );
-        if (!supportedIntegration) {
-          throw new Error(
-            `${integration.id} is not available in the published Calavera CLI v${cliCompatibility.version}.`,
+        execute: async () => {
+          const response = listProfilesResponse({ browser: true });
+          const supportedIds = new Set(
+            filterIntegrationsForCli(listIntegrationOptions(), cliCompatibility.version).map(
+              ({ id }) => id,
+            ),
           );
-        }
-        return supportedIntegration;
-      },
-    });
 
-    navigator.modelContext.registerTool({
-      name: "list_ai_artifacts",
-      description: recipeToolDescriptions.list_ai_artifacts,
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async () =>
-        artifactResponseForCli(
-          listAiArtifactsResponse(recipe().ai ?? []),
-          cliCompatibility.version,
-        ),
-    });
-
-    navigator.modelContext.registerTool({
-      name: "list_baseline_targets",
-      description: recipeToolDescriptions.list_baseline_targets,
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute: async () => ({ metadata: baselineMetadata, targets: listBaselineTargets() }),
-    });
-
-    navigator.modelContext.registerTool({
-      name: "describe_baseline_target",
-      description: recipeToolDescriptions.describe_baseline_target,
-      inputSchema: {
-        type: "object",
-        properties: {
-          target: {
-            oneOf: [{ type: "string", enum: ["widely", "newly"] }, { type: "integer" }],
-            description: recipeToolInputDescriptions.baselineTarget,
-          },
+          return {
+            ...response,
+            profiles: response.profiles.map((profile) => ({
+              ...profile,
+              defaultIntegrations: profile.defaultIntegrations.filter((id) => supportedIds.has(id)),
+            })),
+          };
         },
-        required: ["target"],
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute: async ({ target }) => describeBaselineTarget(target),
-    });
-
-    navigator.modelContext.registerTool({
-      name: "search_baseline_features",
-      description: recipeToolDescriptions.search_baseline_features,
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: recipeToolInputDescriptions.baselineQuery },
-          limit: {
-            type: "integer",
-            minimum: 1,
-            maximum: 100,
-            description: recipeToolInputDescriptions.baselineLimit,
-          },
-        },
-        required: ["query"],
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute: async ({ query, limit }) => ({
-        metadata: baselineMetadata,
-        features: searchBaselineFeatures(query, { limit }),
       }),
-    });
 
-    navigator.modelContext.registerTool({
-      name: "recommend_baseline_target",
-      description: recipeToolDescriptions.recommend_baseline_target,
-      inputSchema: {
-        type: "object",
-        properties: {
-          features: {
-            type: "array",
-            minItems: 1,
-            items: { type: "string" },
-            description: recipeToolInputDescriptions.baselineFeatures,
-          },
+      registerCheckedTool({
+        name: "list_integrations",
+        description: recipeToolDescriptions.list_integrations,
+        ...webMcpSchemas.list_integrations,
+        annotations: {
+          readOnlyHint: true,
+          untrustedContentHint: false,
         },
-        required: ["features"],
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute: async ({ features }) => recommendBaselineTarget(features),
-    });
-
-    navigator.modelContext.registerTool({
-      name: "compose_recipe",
-      description: recipeToolDescriptions.compose_recipe,
-      inputSchema: {
-        type: "object",
-        properties: {
-          profile: {
-            type: "string",
-            enum: profiles,
-            description: recipeToolInputDescriptions.profile,
-          },
-          packageManager: {
-            type: "string",
-            enum: packageManagers,
-            default: "npm",
-            description: recipeToolInputDescriptions.packageManager,
-          },
-          tools: {
-            type: "array",
-            items: {
-              type: "string",
-            },
-            description: recipeToolInputDescriptions.tools,
-          },
-          aiArtifacts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: {
-                  type: "string",
-                  description: recipeToolInputDescriptions.aiArtifactId,
-                },
-                target: {
-                  type: "string",
-                  description: recipeToolInputDescriptions.aiArtifactTarget,
-                },
-              },
-              required: ["id"],
-              additionalProperties: false,
-            },
-            description: recipeToolInputDescriptions.aiArtifacts,
-          },
-          integrationOptions: {
-            type: "object",
-            description: recipeToolInputDescriptions.integrationOptions,
-            additionalProperties: false,
-            properties: {
-              "stylelint-baseline": {
-                type: "object",
-                additionalProperties: false,
-                required: ["available", "severity"],
-                properties: {
-                  available: {
-                    oneOf: [{ type: "string", enum: ["widely", "newly"] }, { type: "integer" }],
-                  },
-                  severity: { type: "string", enum: ["warning", "error"] },
-                },
-              },
-              "html-validate": {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  quality: { type: "boolean" },
-                },
-              },
-              stryker: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  testRunner: {
-                    type: "string",
-                    enum: listIntegrationOptions()
-                      .find(({ id }) => id === "stryker")
-                      ?.testRunners?.map(({ id }) => id),
-                  },
-                  testFiles: {
-                    type: "array",
-                    minItems: 1,
-                    items: { type: "string", minLength: 1 },
-                  },
-                },
-              },
-              "github-repository-controls": {
-                type: "object",
-                additionalProperties: false,
-                required: ["repository"],
-                properties: {
-                  repository: {
-                    type: "string",
-                    pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
-                  },
-                  requiredChecks: {
-                    type: "array",
-                    items: { type: "string" },
-                  },
-                  requireCodeqlResults: { type: "boolean" },
-                  defaultBranch: { type: "string" },
-                  mergeMethods: {
-                    type: "array",
-                    items: { type: "string", enum: ["merge", "squash", "rebase"] },
-                  },
-                  wiki: { type: "boolean" },
-                  projects: { type: "boolean" },
-                  autoMerge: { type: "boolean" },
-                  deleteBranchOnMerge: { type: "boolean" },
-                  updateBranch: { type: "boolean" },
-                  dependabotEcosystems: {
-                    type: "array",
-                    items: { type: "string", enum: ["npm", "github-actions"] },
-                  },
-                  codeqlLanguages: {
-                    type: "array",
-                    items: {
-                      type: "string",
-                      enum: [
-                        "actions",
-                        "c-cpp",
-                        "csharp",
-                        "go",
-                        "java-kotlin",
-                        "javascript-typescript",
-                        "python",
-                        "ruby",
-                        "swift",
-                      ],
-                    },
-                  },
-                  codeqlQuerySuite: { type: "string", enum: ["default", "extended"] },
-                  releaseEnvironment: releaseEnvironmentInputSchema,
-                },
-              },
-            },
-          },
+        execute: async (input) => {
+          const response = listIntegrationsResponse(input);
+          return integrationResponseForCli(response, cliCompatibility.version);
         },
-        required: ["profile"],
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async (input) => {
-        const response = composeRecipeResponse(input, { browser: true });
-        assertPublishedCliCompatibility(response.recipe, cliCompatibility.version);
-        return response;
-      },
-    });
+      }),
 
-    navigator.modelContext.registerTool({
-      name: "validate_recipe",
-      description: recipeToolDescriptions.validate_recipe,
-      inputSchema: {
-        type: "object",
-        properties: {
-          recipe: {
-            type: "object",
-            description: recipeToolInputDescriptions.recipe,
-          },
+      registerCheckedTool({
+        name: "describe_integration",
+        description: recipeToolDescriptions.describe_integration,
+        ...webMcpSchemas.describe_integration,
+        coreCheck: ({ id }) => describeIntegrationResponse(id),
+        annotations: {
+          readOnlyHint: true,
+          untrustedContentHint: false,
         },
-        required: ["recipe"],
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async (input) => {
-        const validation = validateRecipeResponse(input.recipe);
-        if (!validation.ok) return validation;
-
-        try {
-          return {
-            ok: true,
-            recipe: assertPublishedCliCompatibility(input.recipe, cliCompatibility.version),
-          };
-        } catch (error) {
-          return {
-            ok: false,
-            errors: [error instanceof Error ? error.message : String(error)],
-          };
-        }
-      },
-    });
-
-    navigator.modelContext.registerTool({
-      name: "explain_recipe",
-      description: recipeToolDescriptions.explain_recipe,
-      inputSchema: {
-        type: "object",
-        properties: {
-          recipe: {
-            type: "object",
-            description: recipeToolInputDescriptions.recipe,
-          },
+        execute: async (input) => {
+          const integration = describeIntegrationResponse(input.id);
+          const [supportedIntegration] = filterIntegrationsForCli(
+            [integration],
+            cliCompatibility.version,
+          );
+          if (!supportedIntegration) {
+            throw new Error(
+              `${integration.id} is not available in the published Calavera CLI v${cliCompatibility.version}.`,
+            );
+          }
+          return supportedIntegration;
         },
-        required: ["recipe"],
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async (input) =>
-        explainRecipeResponse(
-          assertPublishedCliCompatibility(input.recipe, cliCompatibility.version),
-        ),
-    });
+      }),
 
-    navigator.modelContext.registerTool({
-      name: "download_recipe",
-      description: recipeToolDescriptions.download_recipe,
-      inputSchema: {
-        type: "object",
-        properties: {
-          recipe: {
-            type: "object",
-            description: recipeToolInputDescriptions.optionalDownloadRecipe,
-          },
+      registerCheckedTool({
+        name: "list_ai_artifacts",
+        description: recipeToolDescriptions.list_ai_artifacts,
+        ...webMcpSchemas.list_ai_artifacts,
+        annotations: {
+          readOnlyHint: true,
+          untrustedContentHint: false,
         },
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: false,
-        untrustedContentHint: false,
-      },
-      execute: async (input) => downloadRecipe(input),
-    });
+        execute: async () =>
+          artifactResponseForCli(
+            listAiArtifactsResponse(recipe().ai ?? []),
+            cliCompatibility.version,
+          ),
+      }),
 
-    revealWebMcpBanner();
+      registerCheckedTool({
+        name: "list_baseline_targets",
+        description: recipeToolDescriptions.list_baseline_targets,
+        ...webMcpSchemas.list_baseline_targets,
+        annotations: { readOnlyHint: true, untrustedContentHint: false },
+        execute: async () => ({ metadata: baselineMetadata, targets: listBaselineTargets() }),
+      }),
+
+      registerCheckedTool({
+        name: "describe_baseline_target",
+        description: recipeToolDescriptions.describe_baseline_target,
+        ...webMcpSchemas.describe_baseline_target,
+        coreCheck: ({ target }) => describeBaselineTarget(target),
+        annotations: { readOnlyHint: true, untrustedContentHint: false },
+        execute: async ({ target }) => describeBaselineTarget(target),
+      }),
+
+      registerCheckedTool({
+        name: "search_baseline_features",
+        description: recipeToolDescriptions.search_baseline_features,
+        ...webMcpSchemas.search_baseline_features,
+        annotations: { readOnlyHint: true, untrustedContentHint: false },
+        execute: async ({ query, limit }) => ({
+          metadata: baselineMetadata,
+          features: searchBaselineFeatures(query, { limit }),
+        }),
+      }),
+
+      registerCheckedTool({
+        name: "recommend_baseline_target",
+        description: recipeToolDescriptions.recommend_baseline_target,
+        ...webMcpSchemas.recommend_baseline_target,
+        coreCheck: ({ features }) => recommendBaselineTarget(features),
+        annotations: { readOnlyHint: true, untrustedContentHint: false },
+        execute: async ({ features }) => recommendBaselineTarget(features),
+      }),
+
+      registerCheckedTool({
+        name: "compose_recipe",
+        description: recipeToolDescriptions.compose_recipe,
+        ...webMcpSchemas.compose_recipe,
+        coreCheck: (input) => validateRecipeCompositionInput(input),
+        annotations: {
+          readOnlyHint: true,
+          untrustedContentHint: false,
+        },
+        execute: async (input) => {
+          const response = composeRecipeResponse(input, { browser: true });
+          assertPublishedCliCompatibility(response.recipe, cliCompatibility.version);
+          return response;
+        },
+      }),
+
+      registerCheckedTool({
+        name: "validate_recipe",
+        description: recipeToolDescriptions.validate_recipe,
+        ...webMcpSchemas.validate_recipe,
+        annotations: {
+          readOnlyHint: true,
+          untrustedContentHint: false,
+        },
+        execute: async (input) => {
+          const validation = validateRecipeResponse(input.recipe);
+          if (!validation.ok) return validation;
+
+          try {
+            return {
+              ok: true,
+              recipe: assertPublishedCliCompatibility(input.recipe, cliCompatibility.version),
+            };
+          } catch (error) {
+            return {
+              ok: false,
+              errors: [error instanceof Error ? error.message : String(error)],
+            };
+          }
+        },
+      }),
+
+      registerCheckedTool({
+        name: "explain_recipe",
+        description: recipeToolDescriptions.explain_recipe,
+        ...webMcpSchemas.explain_recipe,
+        coreCheck: ({ recipe }) => validateRecipe(recipe),
+        annotations: {
+          readOnlyHint: true,
+          untrustedContentHint: false,
+        },
+        execute: async (input) =>
+          explainRecipeResponse(
+            assertPublishedCliCompatibility(input.recipe, cliCompatibility.version),
+          ),
+      }),
+
+      registerCheckedTool({
+        name: "download_recipe",
+        description: recipeToolDescriptions.download_recipe,
+        inputSchema: downloadRecipeInputSchema,
+        coreCheck: ({ recipe }) => recipe === undefined || validateRecipe(recipe),
+        annotations: {
+          readOnlyHint: false,
+          untrustedContentHint: false,
+        },
+        execute: async (input) => downloadRecipe(input),
+      }),
+    ]);
+
+    if (registered.includes(true)) {
+      revealWebMcpBanner();
+    }
   } catch (error) {
     console.info("WebMCP tool registration failed.", error);
   }

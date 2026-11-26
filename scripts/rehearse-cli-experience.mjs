@@ -237,6 +237,14 @@ export function buildEnvironment(
     YARN_CACHE_FOLDER: dirs.yarnCache,
     YARN_GLOBAL_FOLDER: join(dirs.home, ".yarn", "berry"),
     YARN_ENABLE_TELEMETRY: "0",
+    // Yarn 4.18.1 holds back versions younger than npmMinimalAgeGate (one day by default). The
+    // registry serves the release candidate with a publish time in 2000, but Vite+ keeps its real
+    // publish times. Within a day of a Vite+ release, `yarn dlx create-vite-plus@latest` falls back
+    // to the previous release while the report names the new one, and an install that names the
+    // new vite-plus fails, because its exact dependency pins have no older version to fall back
+    // to. The run therefore turns the gate off (#970), and the --new checks confirm the installed
+    // Vite+ version, so a gate that still holds Vite+ back fails a check instead of passing (#1090).
+    YARN_NPM_MINIMAL_AGE_GATE: "0",
     BUN_CONFIG_REGISTRY: `${registryUrl}/`,
     BUN_INSTALL_CACHE_DIR: dirs.bunCache,
     BUN_INSTALL: join(dirs.home, ".bun"),
@@ -791,6 +799,7 @@ async function prepareRun(dirs, { mode, pins, versions, isolation }) {
         version: calavera.version,
         bin: join(dirs.tools, "node_modules", ".bin", "create-project-calavera"),
         mcpBin: join(dirs.tools, "node_modules", ".bin", "create-project-calavera-mcp"),
+        packageDirectory: join(dirs.tools, "node_modules", "create-project-calavera"),
       },
       run,
       runOrThrow,

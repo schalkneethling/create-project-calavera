@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { integrationCatalog } from "../src/catalog.js";
-import { applyRecipeObject } from "../src/index.js";
+import { agentBootstrap, applyRecipeObject, ejectProject, parseArgs } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
@@ -478,6 +478,39 @@ test("the text output of an artifacts command shows the cache block it adds and 
   });
 });
 
+// #1135: the dry run prints the replaced cache block through apply's formatter, with the file
+// named in the line, because no file line stands above it.
+test("the text output of artifacts install --dry-run shows a replaced cache block with the lines it had and gets", async () => {
+  const oldBlock =
+    "# calavera:artifact-cache:start\n.calavera/cache/npm/\n# calavera:artifact-cache:end\n";
+  await inProject(`node_modules/\n${oldBlock}`, async (directory) => {
+    await writeFile("calavera.config.json", `${JSON.stringify(recipeWith([]), null, 2)}\n`);
+    await mkdir(".calavera/cache/npm", { recursive: true });
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify({
+        version: 1,
+        integrations: [],
+        managedFiles: [],
+        gitignoreBlocks: [{ integration: "artifact-cache", lines: [".calavera/cache/npm/"] }],
+      })}\n`,
+    );
+
+    const ran = spawnSync(process.execPath, [cli, "artifacts", "install", "--dry-run"], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+    });
+
+    assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);
+    assert.match(
+      ran.stdout,
+      /^Would replace the artifact-cache block in \.gitignore: "\.calavera\/cache\/npm\/" with "\.calavera\/cache\/"$/m,
+    );
+    assert.equal(await readFile(".gitignore", "utf8"), `node_modules/\n${oldBlock}`);
+  });
+});
+
 for (const { name, options, setup } of commands) {
   test(`${name} creates .gitignore with the cache block alone when the project has none`, async () => {
     await inProject(undefined, async () => {
@@ -591,6 +624,10 @@ test("artifacts status --check-updates writes the block for a selection that is 
       "calavera.config.json",
       `${JSON.stringify(recipeWith(["skill-project-goal"]), null, 2)}\n`,
     );
+    // ADR-0020, Decision 1: --check-updates records the cache block only with a state file, so the
+    // project gets one, as artifacts install or --init would write it.
+    await mkdir(".calavera", { recursive: true });
+    await writeFile(".calavera/state.json", `${JSON.stringify({ version: 1 }, null, 2)}\n`);
 
     const result = await runArtifactCommand(
       artifactOptions("status", { checkUpdates: true }),
@@ -698,21 +735,81 @@ for (const { name, rerun, options, setup } of commands) {
 
       for (const dryRun of [true, false]) {
         const registry = cachingRegistry();
+        const services = {
+          ...registry,
+          loadFormatter: async () => {
+            throw new Error("the project formatter cannot load");
+          },
+        };
+        // A loader error that is not a formatter failure still stops every command where it
+        // would; a report names only a FormatterFailure and goes on (owner decision of
+        // 2026-11-25 on #1112, which artifact-status-phase.test.mjs covers).
         await assert.rejects(
-          runArtifactCommand(
-            { ...options, dryRun },
-            {
-              ...registry,
-              loadFormatter: async () => {
-                throw new Error("the project formatter cannot load");
-              },
-            },
-          ),
+          runArtifactCommand({ ...options, dryRun }, services),
           /the project formatter cannot load/,
         );
         assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);
       }
       assert.deepEqual(await snapshotDirectory(), before);
+    });
+  });
+}
+
+// #1112, owner decision of 2026-11-26: when `eject --yes` keeps the state, it keeps the cache
+// block that state records, so the project stays a consistent applied project and
+// --check-updates has nothing to write back.
+for (const edit of ["the base skill", "the artifact-cache block"]) {
+  test(`when --yes keeps the state because ${edit} was edited, it keeps the cache block, and --check-updates writes nothing`, async () => {
+    await inProject(undefined, async () => {
+      // An applied project with a locked artifact, its cache block, and the base skill.
+      await agentBootstrap({ mcpHarness: "skip", packageManager: "npm" });
+      await writeFile(
+        "calavera.config.json",
+        `${JSON.stringify(recipeWith(["skill-project-goal"]), null, 2)}\n`,
+      );
+      await runArtifactCommand(artifactOptions("install"), registry());
+      const gitignore = await readFile(".gitignore", "utf8");
+      assert.match(gitignore, /# calavera:artifact-cache:start/);
+      if (edit === "the base skill") {
+        await writeFile(".agents/skills/calavera/SKILL.md", "# Edited\n");
+      } else {
+        await writeFile(
+          ".gitignore",
+          gitignore.replace(".calavera/cache/\n", ".calavera/cache/\nmine/\n"),
+        );
+      }
+
+      const yes = await ejectProject(parseArgs(["eject", "--yes"]), { interactive: false });
+      const outcome = (/** @type {string} */ kind) =>
+        yes.items.find((item) => item.kind === kind)?.outcome;
+      assert.equal(outcome("state"), "left");
+      assert.equal(outcome("artifact-cache-block"), "left");
+      assert.match(await readFile(".gitignore", "utf8"), /# calavera:artifact-cache:start/);
+      // The dry run says so before --yes runs (ADR-0017, Decision 5).
+      if (edit === "the base skill") {
+        const block = yes.items.find((item) => item.kind === "artifact-cache-block");
+        assert.equal(block?.keptRecord, true);
+      }
+
+      const gitignoreAfter = await readFile(".gitignore", "utf8");
+      const stateAfter = await readFile(".calavera/state.json", "utf8");
+      const checkUpdates = runArtifactCommand(
+        artifactOptions("status", { checkUpdates: true }),
+        registry(),
+      );
+      if (edit === "the base skill") {
+        // The kept block already holds the cache's line, so the plan leaves it unchanged.
+        const { ignoreChanges } = await checkUpdates;
+        assert.deepEqual(
+          ignoreChanges.filter(({ type }) => type !== "unchanged"),
+          [],
+        );
+      } else {
+        // The edited block stops --check-updates before it writes anything, as it stops apply.
+        await assert.rejects(checkUpdates, /Calavera stopped before writing anything/);
+      }
+      assert.equal(await readFile(".gitignore", "utf8"), gitignoreAfter);
+      assert.equal(await readFile(".calavera/state.json", "utf8"), stateAfter);
     });
   });
 }

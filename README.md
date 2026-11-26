@@ -57,7 +57,7 @@ commands for it. It does not apply the recipe.
 3. Choose exactly one project-local MCP host when prompted: Claude Code, Codex,
    Cursor, OpenCode, or skip/manual.
 4. Restart or reload the agent session if your MCP host does not discover new tools dynamically.
-5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`, `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`, `recommend_baseline_target`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
+5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `artifact_status`, `list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`, `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`, `recommend_baseline_target`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 6. Start the agent from the project root.
 7. Agent prompt: `Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, validate and explain it, show me the dry-run result, and apply it only after I approve.`
 
@@ -96,18 +96,50 @@ When apply asks for a value that the recipe does not record, it writes the
 recipe with that value to `calavera.config.json` instead of an exact copy, and
 leaves the downloaded file unchanged. A `--config` path inside the project, such
 as `recipes/team.json`, is used where it is and is not copied.
+`update --config <path>` treats a recipe saved outside the project the same
+way: it copies the recipe into the project root, with the same checks, before it
+applies it.
 
 `npm create` needs the `--` separator before Calavera flags such as `--init`
 and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
-`--init` as its own option and Calavera falls back to the recipe CLI. Yarn
-requires Yarn 2+ for `dlx`; Yarn 1.x users can use
-`npx --package create-project-calavera create-project-calavera --init`.
+`--init` as its own option and Calavera falls back to the recipe CLI.
+Calavera requires Yarn 2 or later. Under Yarn 1, Calavera stops and names the
+commands to use instead.
+
 Direct binary launchers such as `npx --package` do not need an extra `--` before
 Calavera flags: use
 `npx --package create-project-calavera create-project-calavera --help`, not
 `npx --package create-project-calavera create-project-calavera -- --help`.
 MCP server registrations launch `create-project-calavera-mcp` directly and
 should not add `--help`.
+
+Yarn 4.18.1 does not install a package version until the version is older than
+its [`npmMinimalAgeGate`](https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate)
+setting, which defaults to one day. Until a new Calavera release is that old,
+`yarn dlx create-project-calavera` runs the previous release, and a command that
+names the new release, such as
+`yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`,
+stops with `All versions satisfying "<version>" are quarantined`. The gate also
+applies to Vite+ when `--new` runs `yarn dlx create-vite-plus@latest`. To get a
+new release during that time, turn the gate off for one command, for example
+`YARN_NPM_MINIMAL_AGE_GATE=0 yarn dlx create-project-calavera --init` in Bash or
+Zsh. Yarn reads a setting from an environment variable named `YARN_` followed by
+the setting name in snake case, and the variable replaces the global
+`npmMinimalAgeGate` value from `.yarnrc.yml` for that command only. The
+`--no-time-gate` flag exists only on `yarn add` and `yarn up`, not on
+`yarn dlx`.
+
+The MCP server registration that `--init` writes names the Calavera release that
+ran, and your agent starts it without that variable. If you turned the gate off
+for `--init`, the server therefore fails to start until the release is one day
+old. To avoid this, exempt Calavera from the gate instead by adding it to
+[`npmPreapprovedPackages`](https://yarnpkg.com/configuration/yarnrc#npmPreapprovedPackages)
+in your `.yarnrc.yml`:
+
+```yaml
+npmPreapprovedPackages:
+  - create-project-calavera
+```
 
 Agents should treat `dry_run_apply` as the approval boundary. They should show
 the package manager, integrations, dependency packages and their install
@@ -233,8 +265,9 @@ that once accompanied it are gone; a Vite+ project enables Oxlint plugins in the
 
 The optional Knip integration adds unused-file, dependency, and export analysis
 to the generated `quality` script. Calavera writes a minimal `knip.json` that
-keeps Knip's default project discovery and ignores `.agents/**`, because
-Calavera-installed agent files are not imported by project code. When those defaults do not fit a
+keeps Knip's default project discovery and ignores `.agents/**` and
+`.calavera/**`, because project code does not import the agent files and the
+extracted artifact packages that Calavera installs there. When those defaults do not fit a
 project, add targeted `entry`, `project`, or `workspaces` configuration as
 described in the [Knip configuration guide](https://knip.dev/overview/configuration).
 Calavera treats those changes as local edits and will refuse to overwrite or
@@ -395,7 +428,8 @@ You can choose the runner without editing the recipe by hand:
   default. After you choose `node:test`, Calavera asks for the paths that the project's test script
   passes to `node --test`; an empty answer keeps the files that `node --test` runs by default and
   records no `testFiles`. Both commands record your answers in `calavera.config.json`. A run with
-  `--yes` or `--json`, or without a terminal, never asks and keeps Vitest.
+  `--yes` or `--json`, without a terminal, or, for `init`, with the `CI` environment variable set,
+  never asks and keeps Vitest.
 - The Calavera skill tells an agent to confirm the runner with you before the dry run.
 
 ```json
@@ -420,7 +454,8 @@ runner, and writes this `stryker.config.json`:
       "**/{*.test,*-test,*_test,test-*,test}.{cjs,mjs,js,cts,mts,ts}",
       "**/test/**/*.{cjs,mjs,js,cts,mts,ts}"
     ],
-    "nodeArgs": ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"]
+    "nodeArgs": ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"],
+    "forceBail": false
   },
   "tsconfigFile": "stryker-skips-tsconfig-preprocessing.json",
   "reporters": ["clear-text", "html"]
@@ -444,6 +479,13 @@ runner, and writes this `stryker.config.json`:
   results as TAP output. Stryker then loads its coverage hook (`-r {{hookFile}}`) and runs the test
   file (`{{testFile}}`). These are the runner's defaults in 10.1.1; the config states them so that
   the dry run shows what runs.
+- `tap.forceBail` is `false`, so each test file runs to its end instead of being stopped at its
+  first failure. With the runner's default, `true`, Stryker stops the test process (on systems
+  other than Windows, and unless `disableBail` is set), and Stryker's
+  coverage hook then writes its result file into the folder the process is in at that moment. When
+  a test has changed into another folder, such as a temporary project, Stryker cannot find the file
+  and reports the mutant as a runtime error instead of killed. The cost is time: a test file that
+  kills a mutant runs its remaining tests. Stryker still stops at the first test file that fails.
 - `testRunner`, `plugins`, and `tsconfigFile` are set for the same reasons as with Vitest.
 
 When no file matches `tap.testFiles`, the dry run warns that Stryker has no tests to run, and
@@ -596,6 +638,28 @@ Inspect the current project:
 npm create project-calavera doctor
 ```
 
+`doctor` starts with a line that names the project's phase, such as `composed`
+before the first `apply` or `applied` after it, and what resolves it (ADR-0020).
+It then lists what it found under headings: the project, the recipe, each managed
+file, and each artifact, with the problems in the wiring Calavera recorded for an
+artifact under that artifact's line. It reports a managed file
+that `apply` wrote and someone deleted, or that cannot be read, as an error, and
+an edited file that the next `apply` would stop on as a note. It reports each
+artifact at the same level as `artifacts doctor`, and the two never disagree
+about an artifact or the phase. A project with no recipe, state, or lock fails,
+and so does one whose records are only partly there.
+
+`doctor` exits with status 1 when it reports an error, with or without `--json`,
+so a CI step that runs it fails. Warnings and notes do not change the exit status.
+A recipe or `.calavera/state.json` that `doctor` cannot read, parse, or resolve
+stops it before it classifies, so its `--json` result has no `phase`, except during a pending
+artifact transaction: then such a recipe is an error finding, and `doctor` still reports the
+phase as `pending-transaction`, as `artifacts doctor` does. A wiring
+file Calavera recorded that it cannot read is reported as an error, and `doctor`
+goes on. `doctor --json` always prints a result for the step to parse: `phase`,
+`phaseLine`, an `issues` list whose entries each name their `check`, and the
+`artifacts` and `managedFiles` it classified.
+
 Update managed tooling from the recipe:
 
 ```bash
@@ -629,9 +693,8 @@ Calavera falls back to the recipe CLI. With other package managers, use
 `pnpm dlx create-project-calavera --init`,
 `yarn dlx create-project-calavera --init`, or
 `bunx create-project-calavera --init`.
-The Yarn command requires Yarn 2+ because Yarn 1.x does not support `dlx`; Yarn
-1.x users can use `npx --package create-project-calavera create-project-calavera --init`
-or install `create-project-calavera` globally.
+Calavera requires Yarn 2 or later. Under Yarn 1, Calavera stops and names the
+commands to use instead.
 
 The `--init` bootstrap installs the base Calavera skill, adds concise project
 guidance, optionally writes one project-local MCP config, and prints a
@@ -650,6 +713,69 @@ count as Unix ones, and the dry run reports it as an update. The version that
 `.agents/calavera/mcp.md` pins in its launch command may be any published
 version. A file with any other text counts as your edit, so Calavera keeps it
 and reports it, as before.
+
+### Stop Calavera managing a project
+
+`eject` removes the files and the text Calavera keeps in a project to manage it,
+and keeps every tool it installed. It removes the state, the recipe, the
+artifact lock and package copies, the artifact cache and its `.gitignore` block,
+the bootstrap guidance, the MCP setup notes and the `calavera` MCP entry, a
+`.coderabbit.yaml` that Calavera created, and the base Calavera skill. It keeps
+every managed file, every `package.json` script and dependency, and every other
+AI artifact and its wiring, so `vp check` and the generated scripts still run.
+The decision record is
+[ADR-0017](docs/adr/0017-eject-removes-calavera-management-footprint.md).
+
+Run the dry run first. It lists every deletion and every edit, with the exact
+text each edit removes and the text the file holds afterward, and changes
+nothing. For an MCP configuration file, such as `.mcp.json`, it shows only the
+lines around Calavera's entry, with their values hidden, so the tokens of your
+other servers never reach a terminal log or the `--json` output:
+
+```bash
+npm create project-calavera eject -- --dry-run
+```
+
+Then run `eject` in a terminal. It shows the same list, marks each item as
+edited, unedited, or "edits cannot be detected", and removes nothing until you
+approve the whole list:
+
+```bash
+npm create project-calavera eject
+```
+
+Without a terminal, or with `--json`, `eject` refuses unless you pass `--yes`.
+With `--yes`, it removes only the items that match Calavera's records exactly.
+It leaves, and lists, everything else: what it cannot check, such as the recipe
+and the extracted artifact packages in `.calavera/packages/`, any item you
+edited, and the records an item it leaves still needs: the state, the lock,
+or the cache block in `.gitignore`. While it keeps the state, it also keeps the
+cache block, so `artifacts status --check-updates` has nothing to write back.
+Run `eject` in a terminal to approve those.
+
+Once it has removed everything else, `eject` adds a block named `ejected`, with
+one comment line, at the end of `.gitignore`, and creates the file if the
+project has none. It deletes its last remaining record, the state, the lock, or
+the recipe, only after the block is written, so a run that stops or fails in
+between leaves a record and the next `eject` adds the block. The block ignores
+no path. It tells `doctor`, `artifacts status`, and `artifacts doctor` that the
+project left Calavera on purpose. `eject` adds it only when nothing is left, so
+a `--yes` run that leaves items for an approval adds no block. `apply` removes
+the block, because a project it writes into is managed again, and `init` leaves
+it. If you add your own lines inside the block, or change its markers, `eject`
+and `apply` stop before they write anything until you move your lines out of the
+block. The decision record is
+[ADR-0017, Amendment 5](docs/adr/0017-eject-removes-calavera-management-footprint.md#amendment-5-eject-leaves-a-marker-block-in-gitignore).
+
+`eject` never changes `package.json`. It reports each script that runs
+Calavera, and the `create-project-calavera` development dependency with the
+command that removes it for your package manager, or `vp remove` in a project
+that Vite+ manages. It also keeps and reports guidance and MCP entries it
+cannot tell apart from your own edits, such as an edited `AGENTS.md`. In a
+workspace, it removes only the footprint in the current directory and names the
+other directories that hold one, so you can run `eject` there too. `eject` is a
+CLI command only, not an MCP tool, because it removes the Calavera MCP
+registration. Once nothing is left, `eject` reports that it has nothing to do.
 
 ## MCP Server
 
@@ -680,12 +806,27 @@ word in the MCP `command` field and the remaining words in `args`:
 - Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
 - Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
 
-JSON-based MCP hosts use this shape:
+Claude Code (`.mcp.json`) uses this shape:
 
 ```json
 {
   "mcpServers": {
     "calavera": {
+      "command": "npx",
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+    }
+  }
+}
+```
+
+Cursor lists `type` as required for a local server, so `.cursor/mcp.json` adds
+`"type": "stdio"` to the entry:
+
+```json
+{
+  "mcpServers": {
+    "calavera": {
+      "type": "stdio",
       "command": "npx",
       "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }
@@ -701,25 +842,48 @@ command = "npx"
 args = ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
 ```
 
-OpenCode stores local MCP servers under `mcp`:
+Calavera requires OpenCode 2, which stores local MCP servers under
+`mcp.servers` and connects each one unless it sets `"disabled": true`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "calavera": {
-      "type": "local",
-      "command": [
-        "npx",
-        "--package",
-        "create-project-calavera@<version>",
-        "create-project-calavera-mcp"
-      ],
-      "enabled": true
+    "servers": {
+      "calavera": {
+        "type": "local",
+        "command": [
+          "npx",
+          "--package",
+          "create-project-calavera@<version>",
+          "create-project-calavera-mcp"
+        ]
+      }
     }
   }
 }
 ```
+
+OpenCode's migration guide says not to point OpenCode 1.x at files in the
+`mcp.servers` layout. When `opencode.json` holds the `calavera` entry that an
+earlier Calavera release wrote directly under `mcp`, `--init` moves it to
+`mcp.servers`; an entry you edited stays as it is, and `--init` says how to move
+it yourself. `--init` never rewrites an `opencode.json` with comments or
+trailing commas: move or update its `calavera` entry yourself to match the
+example above. When the `opencode` on your `PATH` reports a version older than 2,
+`--init` warns before it writes, but it writes the OpenCode 2 layout either way.
+To skip that check, set `CALAVERA_NO_OPENCODE_VERSION_CHECK` to `1` or `true`.
+
+When `--init` adds, updates, or moves the `calavera` entry in `.mcp.json`,
+`.cursor/mcp.json`, or `opencode.json`, it changes only that entry, and in
+`opencode.json` also adds `"$schema": "https://opencode.ai/config.json"` after the
+last top-level key when the file has no `$schema` string, or replaces a `$schema`
+that is not a string. The rest of the file keeps its indentation, line endings,
+byte order mark, and key order. The one exception is a Vite+ project whose file
+already passes `vp fmt`: there the file is formatted again after the edit, so
+`vp check` still passes, and `vp fmt` can rewrap a line around the entry, such as
+an object that no longer fits on one line. A file that `vp fmt` would change keeps your formatting, with only the
+entry edited, because formatting it would also rewrite your own lines.
 
 Project-local MCP servers run from the project root. Matching the project
 package manager prevents package-manager preflight failures before Calavera can
@@ -742,26 +906,29 @@ Calavera apply run, or apply an approved recipe. An MCP client can use the tools
 in this order:
 
 1. `inspect_project`
-2. `list_profiles`
-3. `list_integrations`
-4. `describe_integration`
-5. `list_ai_artifacts`
-6. `list_baseline_targets`
-7. `describe_baseline_target`
-8. `search_baseline_features`
-9. `recommend_baseline_target`
-10. `compose_recipe`
-11. `validate_recipe`
-12. `explain_recipe`
-13. `dry_run_apply`
-14. `apply_recipe`
+2. `artifact_status`
+3. `list_profiles`
+4. `list_integrations`
+5. `describe_integration`
+6. `list_ai_artifacts`
+7. `list_baseline_targets`
+8. `describe_baseline_target`
+9. `search_baseline_features`
+10. `recommend_baseline_target`
+11. `compose_recipe`
+12. `validate_recipe`
+13. `explain_recipe`
+14. `dry_run_apply`
+15. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
 dependency packages, the command that installs them, the Vite+ detection
 report, project inspection findings,
 omitted script explanations,
 file ownership/action notes, the lines each integration adds to or removes from
-`.gitignore` and `.htmlvalidateignore` (`ignoreChanges`), each artifact and
+`.gitignore` and `.htmlvalidateignore` (`ignoreChanges`), each entry of
+`.calavera/.staging/` with whether apply removes it (`stagingLeftovers`), each temporary
+folder Calavera could not remove once it no longer needed it (`temporaryFolderLeftovers`), each artifact and
 integration input value with where it came from (`artifactInputs` and
 `integrationInputs`, such as the guard's `protectedBranch` and
 `github-repository-controls.defaultBranch`), warnings when those values disagree
@@ -786,11 +953,25 @@ approves the proposed recipe and dry-run result.
   files are handled
 - `--mcp-harness claude-code|codex|cursor|opencode|skip` with `--init` to
   script project-local MCP auto-config
-- `--apply` with `init` to preview and then confirm applying the composed recipe
+- `--apply` with `init` to preview and then confirm applying the composed recipe;
+  without a terminal, with `CI` set, or with `--json`, add `--yes` to apply without
+  the confirmation
 - `--dry-run`
 - `--no-install`
-- `--yes`
-- `--json`
+- `--yes`; `init` without a terminal, with `CI` set, or with `--json`, refuses the
+  profile, package manager, AI artifact, and apply confirmation prompts, as `--new`
+  refuses its confirmation, and names `--yes` and the flag that answers each prompt;
+  with `eject`, `--yes` removes only the items that match Calavera's records exactly
+- `--json`; when the arguments themselves are invalid, such as an unknown flag, a flag
+  missing its value, or an unknown command, or when the command stops with an error while it
+  runs, the run prints `{ command, ok: false, issues }` and exits 1, with the error as an issue
+  with the level `error`, in the same redacted text the run prints without `--json`; `command`
+  is the name the command's success result uses, such as `apply` for `update`, `agent-init` for
+  `bootstrap`, and `artifacts status` for `artifacts status`, or `null` for `help` and when
+  Calavera has no such command or `artifacts` action; because an error result shares its
+  command's name and some success results, such as `init`'s, have no `ok` field, check for
+  `ok: false` to tell an error result apart; a `--json` after `--new` belongs to `vp create` and
+  does not count
 
 ## Debugging Errors
 
@@ -799,7 +980,13 @@ redacted. To also see the stack frames of each error in the chain, set the `CALA
 environment variable to `1` or `true`. The CLI, and the MCP server when it fails to start, then
 print the frames after each error, and the MCP server adds a `stack` field to each error in a tool's
 error result. The frames are redacted with the same rules as the messages. An error that carries no
-frames, such as many file system errors from Node.js, prints no stack.
+frames prints no stack. Whether a file system error from Node.js carries frames depends on the
+Node.js version and the function that raised it. These results come from an `ENOENT` error on
+Node.js 24.22.3 and 26.13.1: `readFile`, `writeFile`, and `appendFile` from `node:fs/promises` carry frames on
+Node.js 24 but none on Node.js 26. Other `node:fs/promises` functions, such as `stat`, `open`, and
+`readdir`, carry frames on both, except `rm` and `opendir`, which carry none on either. An error from a
+synchronous `node:fs` call carries frames on both, and an error passed to a `node:fs` callback
+carries none on either.
 
 ```bash
 CALAVERA_DEBUG=1 npx create-project-calavera@<version> apply
@@ -809,7 +996,57 @@ The switch is an environment variable, not a flag, so that it can also reach the
 agent client starts. A client does not always pass the variables of your shell to the server, so set
 `CALAVERA_DEBUG` in the `env` field of the server's entry in the client's MCP configuration.
 With the switch on, a cause whose text repeats an earlier message is kept with an empty message, so
-that its stack is still shown.
+that its stack is still shown. Without the switch, an MCP tool's error result still keeps such a
+cause, with an empty message, when it carries a `code`, such as `EBUSY`, an `errno`, a `syscall`,
+such as `rename` or `open`, or a name other than `Error`, so that two failures with the same message
+stay distinguishable. The CLI does not print it.
+
+## The Version Notice
+
+A package manager can run an older copy of Calavera that it installed earlier: `npm create
+project-calavera` reuses a cached copy without saying so. To tell you when that happens, each run
+asks the npm registry which version the `latest` dist-tag names. When the running version is older,
+Calavera prints a notice on standard error after the command's own output, whether the command
+succeeded or failed. The notice names both versions and repeats your command pinned to the `latest`
+version, so you can run it as printed. When Calavera runs from your project's own dependencies, the
+notice adds that the dependency is unchanged and gives the command that updates it. The notice only
+informs: the command runs to the end with the installed version, and the exit code is unchanged.
+
+The check asks the registry that your user and project `.npmrc` files and `npm_config_*` variables
+name, without credentials, through the `proxy` or `https-proxy` that your user `.npmrc` or your
+own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`; under Bun, which does not
+support these `.npmrc` settings, they do not apply. A proxy in a project
+`.npmrc` or `.yarnrc.yml` is ignored with a warning. That
+includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's
+file when you run `npx` from a workspace member. A user `.npmrc` that a project `.npmrc` chose with
+`userconfig` counts as a project file too, unless it is your own `~/.npmrc`. A registry or proxy
+variable that a project's Yarn 4 `.env.yarn` sets from a variable, such as `${CI_TOKEN}`, is ignored
+with a warning when Yarn loaded that file for the run (or, on macOS and Windows, where Calavera
+cannot see which `.env.yarn` Yarn read, when Yarn could have read it), and so is one that a project's `.env` file
+sets that way when Bun runs Calavera; a value those files set without a variable applies, and so
+does a variable you set that no such file sets. Calavera reads and sends no registry credential, so
+a registry that requires authentication cannot answer the check, and the notice stays quiet. Under Yarn 2 or later, it asks the registry and proxy that your
+`.yarnrc.yml` files and `YARN_*` variables name, and under Bun, the registry that your `.npmrc` files, `bunfig.toml`, or a Bun registry variable
+such as `BUN_CONFIG_REGISTRY` names. When no proxy is configured, it follows the
+proxy environment variables in either letter case: `HTTPS_PROXY` for an `https:` registry,
+`HTTPS_PROXY`, `HTTP_PROXY`, or `PROXY` for an `http:` registry, and `NO_PROXY` for hosts that skip
+the proxy. The check waits at most 1.5 seconds and writes no file.
+A check that fails or runs out of time prints nothing; set `CALAVERA_DEBUG` to `1` or `true` to see
+why.
+
+These runs skip the check:
+
+- any command with `--json`
+- `--help`
+- `artifacts status` and `artifacts doctor` without `--check-updates`, which contact no registry
+- the MCP server
+
+To turn the check off, set the `CALAVERA_NO_VERSION_CHECK` environment variable to `1` or `true`.
+Calavera then makes no request and prints no notice.
+
+```bash
+CALAVERA_NO_VERSION_CHECK=1 npx create-project-calavera@<version> apply
+```
 
 ## Vite+ And Delta Workflows
 
@@ -835,15 +1072,19 @@ workspace root, the test step is `vp run -r test`, which runs each member's
 projects keep a `quality` script without `vp` when it runs two or more of
 Calavera's scripts. With only one, such as `npm run knip`, Calavera does not
 generate `quality`, because it would only repeat that script. Apply records
-the `quality` value it writes, or `null`, in `.calavera/state.json` as
-`qualityScript`. When it does not generate `quality`, it removes the existing
+the `quality` value it writes in `.calavera/state.json` as `qualityScript`.
+When it writes none, it keeps a record that still equals the project's
+value, and records `null` otherwise. When it does not generate `quality`, it removes the existing
 `quality` if that record holds exactly the same value, because then Calavera
 wrote it. It keeps any other value, including one an earlier release wrote
 before this record existed, and the dry run says so; when the state file has
 no record and the value matches what an earlier release wrote for the recipe,
-the dry run names the match, so you can remove it. Calavera writes no script
-that repeats a `vp` command on its own, and does not add Playwright or other test
-suites to `quality`. The Stylelint scripts are `lint:styles` and
+the dry run names the match, so you can remove it. A recipe that sets
+`scripts.quality` to `false` leaves `quality` alone: apply neither writes nor
+removes it, and keeps a record that holds the project's value, so a later apply
+that omits a requested `quality` can still remove the value Calavera wrote.
+Calavera writes no script that repeats a `vp` command on its own, and does not
+add Playwright or other test suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier
 apply, a later apply renames a `lint` or `lint:fix` script whose value is
 exactly one Calavera wrote with Stylelint; it keeps any other value as your own,
@@ -902,6 +1143,24 @@ Skills install into `.agents/skills/`. Hook and agent items can set `target` to
 choose their `.agents/hooks/<target>/` or `.agents/agents/<target>/` directory.
 The current bundled hooks and agents come from `claude-toolkit` and default to
 `claude-code`.
+
+`.agents/`, the folders under it, `.codex/`, and `.calavera/` must be real
+folders, not symbolic links. `artifacts install` and `artifacts update` stop
+before they write anything, and `apply` stops before it installs, rebuilds, or
+writes any artifact, when one of these folders, or another folder on the path of
+an artifact output they write, is a symbolic link, because Calavera cannot roll
+an interrupted install back through a link. `apply` checks every artifact its
+recipe selects, including artifacts that are already locked. A targeted update
+checks every artifact it stages again, including artifacts whose files do not
+change. `artifacts status --check-updates` stops when `.calavera` is a symbolic
+link, because the update check fills the registry cache in `.calavera/cache`.
+`--init`, `agent-init`, and `bootstrap` stop before they write anything, with or
+without `--dry-run`, when `.agents`, `.agents/skills`, `.agents/skills/calavera`,
+`.agents/calavera`, or `.calavera` is a symbolic link, because those are the
+folders the bootstrap writes the base skill, the MCP setup notes, and its state
+into. The message names the link; replace it with a real folder and run the
+command again. A link that points from another tool's folder to a folder under
+`.agents/` is fine.
 
 When a recipe installs a skill, Calavera also creates or updates
 `.coderabbit.yaml` so CodeRabbit excludes `.claude/skills/**`,
@@ -1009,8 +1268,8 @@ Apply copies the recipe into the project root as `calavera.config.json`. The
 [agent-first command table](#agent-first-command-table) lists the commands for
 each package manager.
 
-When the browser exposes WebMCP, the composer registers a browser parity surface
-for the MCP recipe composition workflow:
+When the browser exposes WebMCP through `document.modelContext`, the composer
+registers a browser parity surface for the MCP recipe composition workflow:
 
 1. `list_profiles`
 2. `list_integrations`
@@ -1075,7 +1334,7 @@ New recipes select package-backed skills, hooks, and agents by stable ID:
 }
 ```
 
-Legacy `{ "type", "src", "target" }` entries remain readable during the compatibility window. Migrate and manage exact versions with:
+Legacy `{ "type", "src", "target" }` entries remain readable during the compatibility window. A legacy entry cannot record inputs, so `apply`, `update`, their dry runs, and the MCP `dry_run_apply` and `apply_recipe` tools refuse, before writing anything, a legacy entry that selects an artifact that needs wiring or inputs, such as `{ "type": "skill", "src": "skills/protected-branch-guard" }`. The error names the entry; run `artifacts migrate`, which rewrites each legacy entry as an ID entry, then apply the recipe again, recording the inputs the artifact needs. `artifacts migrate` rewrites the whole recipe, so when the recipe holds a key twice in one object, or a number that Calavera would write in another spelling, such as `1.50`, the migration and its dry run stop before writing and name the file and the line to edit. Migrate and manage exact versions with:
 
 ```bash
 create-project-calavera artifacts migrate
@@ -1087,7 +1346,7 @@ create-project-calavera artifacts update skill-project-goal
 create-project-calavera artifacts update --all --tag next
 ```
 
-Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. The independently versioned artifact packages are not runtime dependencies of the CLI or artifact core, so they do not enter a consumer dependency graph or lockfile through Calavera itself. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; `apply` and `apply_recipe` reuse those exact locked versions. When the recipe selects an artifact that has no lock entry, apply installs it first, as `artifacts install` would: `apply --dry-run` and `dry_run_apply` report each artifact they would resolve and lock, with its version, and change nothing; `apply` and `apply_recipe` lock and install only those artifacts, then apply the rest of the recipe. Before that install commits, apply checks every selected artifact against the project. If an artifact output would overwrite a local edit or a file Calavera does not manage, or the install fails for any other reason, apply stops with an error that names `artifacts install`. When the install stops before its transaction commits, or a partly committed transaction rolls back, the artifact lock, artifact outputs, and Calavera state stay as they were. If the rollback itself fails, the error reports both failures, the project may be partly changed, and the next `apply`, `apply_recipe`, or `artifacts` command retries the rollback; a dry run refuses to run until it has. Registry cache entries can remain in an existing `.calavera/cache/npm`. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit. Run `artifacts doctor` to verify installed outputs, managed state, and local edits without checking the registry. With `--check-updates`, it checks the registry as `artifacts status --check-updates` does, and writes the cache block as status does. The existing managed-state hashes continue to block overwriting local edits.
+Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. The independently versioned artifact packages are not runtime dependencies of the CLI or artifact core, so they do not enter a consumer dependency graph or lockfile through Calavera itself. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; `apply` and `apply_recipe` reuse those exact locked versions. When the recipe selects an artifact that has no lock entry, apply installs it first, as `artifacts install` would: `apply --dry-run` and `dry_run_apply` report each artifact they would resolve and lock, with its version, and change nothing; `apply` and `apply_recipe` lock and install only those artifacts, then apply the rest of the recipe. Before that install commits, apply checks every selected artifact against the project. If an artifact output would overwrite a local edit or a file Calavera does not manage, or the install fails for any other reason, apply stops with an error that names `artifacts install`. When the install stops before its transaction commits, or a partly committed transaction rolls back, the artifact lock, artifact outputs, and Calavera state stay as they were. If the rollback itself fails, the error reports both failures, the project may be partly changed, and the next `apply`, `apply_recipe`, or `artifacts` command other than `artifacts doctor` retries the rollback; a dry run refuses to run until it has. `artifacts doctor` does not roll it back, because the rollback writes files: it lists the files the rollback would restore or remove, tells you to save any edits to them and then run `artifacts status`, and exits 1. Before a rollback replaces or removes anything, it checks each file and folder it would replace or remove against what the stopped transaction wrote there: the path and kind of each entry, the permissions of each file and folder, the bytes of each file, and the target of each symbolic link. On Windows, the permissions Node.js reports reflect only the read-only attribute. When you have edited one since, or a transaction journal from an earlier Calavera version does not record what it wrote, the rollback changes nothing, names each such path, and tells you to move the path out of the project to keep your edits, or delete it to discard them, before you run the command again. Registry cache entries can remain in an existing `.calavera/cache/npm`. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit. Run `artifacts doctor` to verify installed outputs, managed state, and local edits without checking the registry. Both `artifacts status` and `artifacts doctor` start with a line that names the project's phase, such as `composed` before the first `apply` or `applied` after it, and what resolves it (ADR-0020). When a selected artifact's files are missing, cannot be read, are not managed by Calavera, or carry a local edit, `artifacts doctor` exits with status 1 and sets `ok` to `false`, with or without `--json`; a healthy project exits 0. It also fails when the project is `unmanaged`, `ejected`, or `incomplete`, when the project's formatter cannot load or refuses a managed file, and when the recipe's managed files cannot be planned, because `apply` stops on the same things. With `--check-updates`, when the formatter cannot format the state that records the artifact cache block, both commands write no block, resolve packages through a temporary cache, and say why: `artifacts status` as a note, exiting 0, and `artifacts doctor` as an error, exiting 1. A selected artifact whose files are present and match the state but that has no lock entry is named as installed, with the `artifacts install` command that records it in the lock. A project whose recipe is not applied yet gets a warning that does not fail it. In text output only, a closing verdict line names each failed check and each artifact with a problem, or says that doctor found none. A selected artifact that is not installed yet, the normal state between `init` and `apply`, is not a problem: text output names it in a note with the command that installs it, and it does not change `ok` or the exit status. When a file of such an artifact already exists without a state record, which `apply` stops on unless the file matches the package, `artifacts status`, `artifacts doctor`, and `doctor` each print a note under the artifact. The note says whether the file matches the version in the project's artifact cache and how to keep the file. The comparison reads a temporary copy of `.calavera/cache/npm` offline, so it contacts no registry and changes nothing in the project, and the `--json` result lists each such file in the artifact's `unrecordedFiles`. A lock entry the recipe no longer selects, whose files were deleted, edited, or are not recorded, is not a problem either, because the entry is a leftover record: `artifacts status` and `artifacts doctor` print it as a warning, which does not change `ok` or the exit status. For an entry whose files were deleted, the warning names the `artifacts install` command. That command drops the entry when it can also install what the recipe selects; otherwise, it stops and names the problem. A selected artifact whose files were deleted still fails. `artifacts status` reports the same problems and still exits 0 when it reports them. With `--check-updates`, `artifacts doctor` checks the registry as `artifacts status --check-updates` does, and writes the cache block as status does. To classify managed files, both commands load the project's formatter as `apply` does. The existing managed-state hashes continue to block overwriting local edits.
 
 `artifacts status` lists each artifact with its locked version and channel, and contacts no registry. With `--check-updates`, it also resolves each artifact on its channel, `latest` or `next`, and for each available update prints the installed and latest versions, a link to the release notes, and the command that applies that update:
 
@@ -1099,9 +1358,11 @@ skill-code-review  0.4.0, up to date (latest)
 Update every artifact: npm create project-calavera artifacts update -- --all
 ```
 
-The commands use the runner for the recipe's package manager, add `--tag next` for an artifact on the `next` channel, and add `--config` when the recipe is not `calavera.config.json`. The all-artifacts command appears only when an update is available, the recipe selects more than one artifact, and every locked selection follows the same channel, because `--all` moves every artifact to the channel that `--tag` names. A targeted `artifacts update <id>` advances only the artifact it names. The other locked selections stay at their locked versions, and their outputs and local edits are checked as on every update. A selection that has no lock entry yet stays as it is until `artifacts install` installs it, or until `artifacts update --all` installs it on the channel that `--tag` names, or `latest` without `--tag`. When an update is available and the recipe has such selections, status says so after the update commands. The recipe is the source of truth for which artifacts stay locked: `artifacts install` and `artifacts update` remove the lock entry of an artifact the recipe no longer selects, and leave its installed files in place. Status marks such an artifact as not selected and says that the next install or update removes its lock entry; when the recipe selects no artifacts at all, it names only install, because `artifacts update` then refuses to run. The install or update, its dry run included, names each lock entry it removes or would remove. The release-notes link points at the `CHANGELOG.md` in the directory that the package's published `repository` metadata names on GitHub. When that metadata is missing, names a host other than GitHub, or names no package directory or one outside the repository, status still reports the update and its command, and says that there is no link. When every artifact is current, status says so. `--json` returns the same information: each artifact's `latestVersion`, `updateAvailable`, `releaseNotesUrl`, `updateCommand`, and, for a selection without a lock entry, `installCommand`, plus `updateAllCommand` and, without `--check-updates`, `checkUpdatesCommand`. Each artifact also has `selected`, which is false for a lock entry the recipe no longer selects and null when the recipe file does not exist, and the `--json` result of `artifacts install` and `artifacts update` lists those entries in `removedLockEntries`. The `--json` results of install, update, and status also carry `ignoreChanges`, the artifact cache block the command writes or would write in `.gitignore`, and `pointers`, which explains the block when the command adds it.
+The commands use the runner for the recipe's package manager, add `--tag next` for an artifact on the `next` channel, and add `--config` when the recipe is not `calavera.config.json`. The all-artifacts command appears only when an update is available, the recipe selects more than one artifact, every locked selection follows the same channel, and the update check succeeded for every selected artifact, because `--all` moves every artifact to the channel that `--tag` names. A targeted `artifacts update <id>` advances only the artifact it names. The other locked selections stay at their locked versions, and their outputs and local edits are checked as on every update. A selection that has no lock entry yet stays as it is until `artifacts install` installs it, or until `artifacts update --all` installs it on the channel that `--tag` names, or `latest` without `--tag`. When an update is available and the recipe has such selections, status says so after the update commands. The recipe is the source of truth for which artifacts stay locked: `artifacts install` and `artifacts update` remove the lock entry of an artifact the recipe no longer selects, and leave its installed files in place. Status marks such an artifact as not selected and says that the next install or update removes its lock entry; when the recipe selects no artifacts at all, it names only install, because `artifacts update` then refuses to run. The install or update, its dry run included, names each lock entry it removes or would remove. The release-notes link points at the `CHANGELOG.md` in the directory that the package's published `repository` metadata names on GitHub. When that metadata is missing, names a host other than GitHub, or names no package directory or one outside the repository, status still reports the update and its command, and says that there is no link. When the registry lookup for one artifact fails, for example because the artifact is locked on `next` and npm has no `next` tag for its package, status reports that artifact as "update check failed" and reports every other artifact as usual. It names the cause, the npm configuration Calavera ignored that may explain it, and, where one applies, what to do: follow `latest` instead for a missing `next` tag, wait for the registry to list the version a tag names, point the registry setting at a registry that serves Calavera's packages without authentication when the registry answers 401 or 403, because Calavera sends no credentials, or check the registry settings or the network, then run the check again. Each lookup has a deadline of 15 seconds, so a registry that accepts the connection and never answers does not hold the command: status ends that request, reports the artifact with the code `ELOOKUPTIMEOUT` and a remedy, and checks the next artifact. After a lookup to a registry times out, status sends no further lookups to that registry URL in the same run; a registry on the same host under another path is still checked. It reports each remaining artifact on that registry as "update not checked", with the code `ELOOKUPSKIPPED`, a reason that names the registry, and the same remedy, and it still checks artifacts on other registries. A run therefore waits for at most one deadline per registry that does not answer. A fetch failure also names its kind, such as `request-timeout` or `invalid-json`, and a package document that the registry returns but Calavera cannot read, such as `null`, is reported with the code `EBADPACKUMENT`. A lookup is reported with the code `EINSECUREREDIRECT` when Calavera refuses its redirect: from `https` to plain `http` on a host that is not loopback, or from a plain-`http` registry to plain `http` on another host that is not loopback. The reason and remedy name no URL. An error from the local file system, such as a cache folder Calavera cannot write, still stops the command. The cause names the missing tag, or the registry error code and HTTP status, but never the registry's own message, which is raw registry text that can hold the request URL and response details. An error that Calavera raises itself, such as an invalid `.npmrc` registry or a package whose identity or integrity does not match, still stops the command with its own message. A failed check does not count as a problem for `artifacts doctor`, so it does not change `ok` or the exit status; doctor's closing lines name the artifacts whose check failed. Status does not say that every artifact is up to date while a check has failed. When every artifact is current, status says so. `--json` returns the same information: each artifact's `latestVersion`, `updateAvailable`, `releaseNotesUrl`, `updateCommand`, and `installCommand`, for a selection without a lock entry or a lock entry the recipe no longer selects whose files were deleted, and `updateCheckFailure`, which is null unless the lookup failed and then holds the error's `code`, `statusCode`, `origin` (the origin that answered an HTTP failure, or null), `reason`, `remedy` (null when there is nothing to do), `type` (the kind of a fetch failure, or null), `npmDiagnostics`, and `unsetVariables`, plus `updateAllCommand`, `updateAllBlockedBy`, which names the selected artifacts whose failed check withholds the all-artifacts command, and, without `--check-updates`, `checkUpdatesCommand`. The `--json` results of status and doctor also carry `phase`, `phaseLine`, `phaseNotes`, `formatterFailures`, `managedFilePlanProblem`, and `cacheBlockProblem`, and each artifact has a `condition` with its reason. Each artifact also has `selected`, which is false for a lock entry the recipe no longer selects and null when the recipe file does not exist, and the `--json` result of `artifacts install` and `artifacts update` lists those entries in `removedLockEntries`. The `--json` results of install, update, and status also carry `ignoreChanges`, the artifact cache block the command writes or would write in `.gitignore`, and `pointers`, which explains the block when the command adds it. When install or update cannot remove one of its staging folders after it commits the artifact cache block or the install, the command still finishes and keeps what it committed: it prints a warning that names each folder with the error code and asks you to remove it, and its `--json` result lists the folders in `temporaryFolderLeftovers`, as apply does.
 
-Commit `.calavera/artifacts.lock.json` and `.calavera/packages/`, but not `.calavera/cache/`. The cache is a local npm download cache, so it does not belong in Git. While the recipe selects an artifact, or while the cache folder exists, `apply` keeps the folder out of Git with a marked block in `.gitignore`, between `# calavera:artifact-cache:start` and `# calavera:artifact-cache:end`, and says so when it adds the block. The dry run lists the block like the integrations' `.gitignore` blocks. `artifacts install`, `artifacts update`, and `artifacts status --check-updates` write and record the same block before they resolve any package, so the cache stays out of Git even when the registry fails part way, and their dry runs list it. An edited block stops these commands before they write anything, as it stops `apply`. A `.gitignore` line does not untrack files Git already tracks, so if a project committed the cache before this block existed, run `git rm -r --cached .calavera/cache` once and commit the result.
+The MCP server's `artifact_status` tool returns the same report as `artifacts status --json`, so an agent can see which artifacts have updates, local edits, or missing files without leaving the MCP tool sequence. Its optional `checkUpdates` input works like `--check-updates`, and its optional `config` input works like `--config`. The tool writes nothing into the project and runs no project code, so it differs from the command in three ways. With `checkUpdates`, it resolves packages through a new temporary cache that it removes afterward, and it writes no artifact cache block, so its `ignoreChanges` and `pointers` are always empty. Because the command reuses a package document that `.calavera/cache/npm` holds for as long as the registry allows, which is a few minutes on the npm registry, the tool can report a release that the command does not report yet. The tool never loads the project's formatter. While an artifact transaction is pending, it does not roll the transaction back as `artifacts status` does. It returns a result with `phase` set to `pending-transaction`, no artifacts, `ok` set to `false`, `rollbackFiles`, which lists the files the rollback would restore from their backups or remove (or is `null` when Calavera cannot read the transaction journal, or the journal fails the checks the rollback runs before it changes anything), and `remedy`, which tells you to save any edits to those files and then run `artifacts status`, which rolls the transaction back. Every other result carries the project's `phase` and its phase line too, and each artifact's `condition`. Because the tool runs no project code, a managed file that needs the project's formatter to classify is `not-checked`, and the phase line then says to run `doctor`. Installing, updating, and migrating artifacts stay CLI commands.
+
+Commit `.calavera/artifacts.lock.json` and `.calavera/packages/`, but not `.calavera/cache/`. The cache is a local npm download cache, so it does not belong in Git. While the recipe selects an artifact, or while the cache folder exists, `apply` keeps the folder out of Git with a marked block in `.gitignore`, between `# calavera:artifact-cache:start` and `# calavera:artifact-cache:end`, and says so when it adds the block. The dry run lists the block like the integrations' `.gitignore` blocks. `artifacts install`, `artifacts update`, and `artifacts status --check-updates` write and record the same block before they resolve any package. `--check-updates` does so only when `.calavera/state.json` exists and the project is `composed`, `applied`, or `drifted`; in any other phase, such as what `eject --yes` leaves, it resolves through a temporary cache and writes nothing into the project. A command that writes the block writes it first, so the cache stays out of Git even when the registry fails part way, and their dry runs list it. An edited block stops these commands before they write anything, as it stops `apply`. A `.gitignore` line does not untrack files Git already tracks, so if a project committed the cache before this block existed, run `git rm -r --cached .calavera/cache` once and commit the result.
 
 ## macOS update companion
 

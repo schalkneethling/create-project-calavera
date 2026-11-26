@@ -25,6 +25,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
@@ -94,10 +95,20 @@ async function inWiredProject(callback) {
   }
 }
 
-/** @returns {Promise<{ level: string, message: string }[]>} */
+/**
+ * The issues `doctor --json` reports. doctor exits 1 when it reports an error (#1030), so the exit
+ * code is checked against `ok` instead of being treated as a failure.
+ *
+ * @returns {Promise<{ level: string, message: string, check: string }[]>}
+ */
 async function doctorIssues() {
-  const output = execFileSync(process.execPath, [cli, "doctor", "--json"], { encoding: "utf8" });
-  return JSON.parse(output).issues;
+  const { status, stdout, stderr } = spawnSync(process.execPath, [cli, "doctor", "--json"], {
+    encoding: "utf8",
+  });
+  assert.ok(status === 0 || status === 1, `doctor exited ${status}\n${stderr}`);
+  const report = JSON.parse(stdout);
+  assert.equal(status, report.ok ? 0 : 1, `doctor exited ${status}\n${stderr}`);
+  return report.issues;
 }
 
 /**
@@ -157,7 +168,7 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
       env: { ...process.env, NO_COLOR: "1" },
     });
 
-    // #617: the artifact is named once, and each removal sits under it.
+    // #617: the artifact is named once, and each block removal sits under it.
     assert.match(output, new RegExp(`^ {2}${id}, which the recipe no longer selects$`, "m"));
     for (const hook of hooks) {
       assert.match(
@@ -168,11 +179,14 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
         ),
       );
     }
+    // #1128, #1145: the settings file is named once, with each group it would lose under it,
+    // and each group line names the artifact whose group it is.
+    assert.match(output, /^ {2}Would update \.claude\/settings\.json$/m);
     for (const event of ["SessionStart", "PreToolUse"]) {
       assert.match(
         output,
         new RegExp(
-          `^ {4}Would remove the ${event} group from \\.claude/settings\\.json, because the recipe no longer selects it: `,
+          `^ {4}Would remove the ${event} group for ${id}, because the recipe no longer selects ${id}: `,
           "m",
         ),
       );
@@ -331,7 +345,9 @@ test("Given the skill directory deleted by hand, doctor reports each block whose
   await inWiredProject(async (registry) => {
     await rm(skillDirectory, { recursive: true });
 
-    const issues = (await doctorIssues()).filter(({ message }) => message.includes("not exist"));
+    const issues = (await doctorIssues()).filter(
+      ({ check, message }) => check === "wiring" && message.includes("not exist"),
+    );
     assert.deepEqual(
       issues.map(({ level, message }) => [level, message.split(":")[0]]),
       hooks.map((hook) => ["error", `.vite-hooks/${hook}`]),
@@ -346,6 +362,29 @@ test("Given the skill directory deleted by hand, doctor reports each block whose
     // The remedy works: with the folder gone, apply installs the skill again.
     await callMcpTool("apply_recipe", { recipe: guardRecipe(), noInstall: true }, registry);
     assert.deepEqual(await missingScriptErrors(), []);
+  });
+});
+
+test("Given the skill directory deleted by hand, doctor's text output names the artifact once, with its wiring findings under it", async () => {
+  await inWiredProject(async () => {
+    await rm(skillDirectory, { recursive: true });
+
+    const { status, stdout, stderr } = spawnSync(process.execPath, [cli, "doctor"], {
+      encoding: "utf8",
+    });
+    assert.equal(status, 1, `${stdout}\n${stderr}`);
+    // The artifact line and the wiring findings share one item: the findings print under it,
+    // without the artifact's ID, so the listing check finds the ID once, under Artifacts.
+    assert.deepEqual(listingViolations(`${stdout}${stderr}`, [id]), []);
+    for (const hook of hooks) {
+      assert.match(
+        stderr,
+        new RegExp(
+          String.raw`^ {4}\.vite-hooks/${hook}: the block runs \.agents/skills/protected-branch-guard/scripts/guard\.mjs, which does not exist`,
+          "m",
+        ),
+      );
+    }
   });
 });
 
@@ -408,7 +447,9 @@ test("Given the skill directory deleted by hand and the guard deselected, doctor
     await rm(skillDirectory, { recursive: true });
     await writeFile("calavera.config.json", `${JSON.stringify(deselectedRecipe(), null, 2)}\n`);
 
-    const issues = (await doctorIssues()).filter(({ message }) => message.includes("not exist"));
+    const issues = (await doctorIssues()).filter(
+      ({ check, message }) => check === "wiring" && message.includes("not exist"),
+    );
     assert.equal(issues.length, 3);
     for (const { message } of issues) {
       assert.match(
@@ -484,29 +525,38 @@ test("Given the guard applied and wired, when the recipe drops it and clean --dr
   });
 });
 
-test("Given the guard deselected, clean --dry-run in a terminal says why each block and group would be removed", async () => {
+test("Given the guard deselected, clean --dry-run in a terminal says why each block and group would be removed, and names each file once, under a heading", async () => {
   await inWiredProject(async () => {
     await writeConfig(deselectedRecipe());
     const { status, stdout, stderr } = runClean(["--dry-run"]);
     assert.equal(status, 0, stderr);
 
+    assert.match(stdout, /^Wiring:$/m);
     for (const hook of hooks) {
       assert.match(
         stdout,
         new RegExp(
-          `Would remove the ${id} block from \\.vite-hooks/${hook}, because the recipe no longer selects ${id}`,
+          `^ {2}Would update \\.vite-hooks/${hook}\\n {4}Would remove the ${id} block, because the recipe no longer selects ${id}: "`,
+          "m",
         ),
       );
     }
+    assert.match(stdout, /^ {2}Would update \.claude\/settings\.json$/m);
     for (const event of ["SessionStart", "PreToolUse"]) {
       assert.match(
         stdout,
         new RegExp(
-          `Would remove the ${event} group for ${id} from \\.claude/settings\\.json, because the recipe no longer selects ${id}`,
+          `^ {4}Would remove the ${event} group for ${id}, because the recipe no longer selects ${id}: `,
+          "m",
         ),
       );
     }
-    assert.match(stdout, /Would remove \.agents\/skills\/protected-branch-guard/);
+    assert.match(
+      stdout,
+      /^Artifacts:\n {2}Would remove \.agents\/skills\/protected-branch-guard$/m,
+    );
+    // #331: the rehearsal's listing check (#918) on the same project's JSON result.
+    assert.deepEqual(listingViolations(stdout, namedItems(cleanJson(["--dry-run"]))), []);
   });
 });
 
@@ -515,11 +565,14 @@ test("Given the guard deselected, when clean runs before apply, then the hooks i
     await writeConfig(deselectedRecipe());
     const { status, stdout, stderr } = runClean(["--yes"]);
     assert.equal(status, 0, stderr);
-    assert.match(stdout, /Removed \.agents\/skills\/protected-branch-guard/);
+    assert.match(stdout, /^ {2}Removed \.agents\/skills\/protected-branch-guard$/m);
     for (const path of wiringPaths) {
       assert.match(
         stdout,
-        new RegExp(`Removed the ${id} wiring from ${path.replaceAll(".", "\\.")}`),
+        new RegExp(
+          `^ {2}Updated ${path.replaceAll(".", "\\.")}\\n {4}Removed the (?:${id} block|\\w+ group for ${id}), `,
+          "m",
+        ),
       );
     }
 
@@ -673,6 +726,45 @@ test("Given an apply that deselected the guard and an edit inside its skill dire
     );
     assert.match(result.changes[0].reason, /AI artifact has local edits/);
     assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given an apply that deselected the guard and an edit inside its skill directory, clean --dry-run keeps only the skill and lists it under Artifacts, as a clean that also removes something does", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    const skillFile = `${skillDirectory}/SKILL.md`;
+    await writeFile(skillFile, `${await readFile(skillFile, "utf8")}\nMy own note.\n`);
+
+    // #331: clean keeps every stale item, so it returns before planning any removal; its skip
+    // change carries the same artifact fields as one from a clean that removes something.
+    const result = cleanJson(["--dry-run"]);
+    assert.deepEqual(
+      result.changes.map(({ type, path, category, aiType, name }) => ({
+        type,
+        path,
+        category,
+        aiType,
+        name,
+      })),
+      [
+        {
+          type: "skip",
+          path: skillDirectory,
+          category: "ai",
+          aiType: "skill",
+          name: "protected-branch-guard",
+        },
+      ],
+    );
+
+    const { status, stdout, stderr } = runClean(["--dry-run"]);
+    assert.equal(status, 0, stderr);
+    assert.match(
+      stdout,
+      /^No stale managed items were safe to remove\.\n\nArtifacts:\n {2}Would skip \.agents\/skills\/protected-branch-guard: AI artifact has local edits/m,
+    );
+    assert.doesNotMatch(stdout, /^Files:$/m);
   });
 });
 
@@ -914,5 +1006,33 @@ test("Given a guard kept for two reasons and another item kept for a third, clea
     );
     assert.match(result.message, /because a hook is a symbolic link that Calavera cannot follow\./);
     assert.equal(await exists(script), true);
+  });
+});
+
+// #1135: the reason for a link that cannot be followed has one wording for any number of items.
+test("Given two deselected skills and a hook link that cannot be followed, clean names both in one sentence with the same reason", async () => {
+  await inWiredProject(async () => {
+    const goal = { id: "skill-project-goal", directory: ".agents/skills/project-goal" };
+    const registry = stubRegistry(
+      new Map([
+        [id, "0.1.0"],
+        [goal.id, "0.1.0"],
+      ]),
+    );
+    const both = { ...guardRecipe(), ai: [...guardRecipe().ai, { id: goal.id }] };
+    await callMcpTool("apply_recipe", { recipe: both, noInstall: true }, registry);
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    await symlink("../scripts/missing.sh", ".vite-hooks/post-merge");
+
+    const result = cleanJson(["--dry-run"]);
+    const kept = result.changes
+      .filter(({ skipReasons }) => skipReasons?.includes("unfollowable-link"))
+      .map(({ path }) => path);
+    assert.deepEqual(kept, [skillDirectory, goal.directory]);
+    assert.equal(
+      result.message,
+      `No stale managed items were safe to remove. Kept ${kept.join(", ")}, because a hook is a symbolic link that Calavera cannot follow. Repair or remove the links each item's reason names, then run clean again.`,
+    );
   });
 });

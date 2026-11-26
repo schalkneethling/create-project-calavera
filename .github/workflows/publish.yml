@@ -32,6 +32,10 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install Playwright browsers
         run: pnpm browsers:install --with-deps
+      # The ubuntu-latest image has no zsh, and shell-quote.test.mjs pastes printed commands into
+      # zsh and bash (#1037). Hosted Linux runners allow passwordless sudo.
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
       - name: Check
         run: pnpm check
       - name: Validate package
@@ -88,12 +92,30 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # Only the script that moves `next` (#1126), read from the release commit rather than from the
+      # build artifact, so nothing the build job wrote runs while this job can mint OIDC tokens.
+      # Non-cone mode checks out that one file and no root files.
+      - name: Checkout next tag script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/move-next-tag.mjs
+          sparse-checkout-cone-mode: false
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.8.0
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      # Trusted publishing can change a dist-tag only with npm CLI 11.21.0 or later (or 12.2.0 or
+      # later on npm 12), and Node.js 24.8.0, which this job pins, bundles npm 11.6.0. See
+      # https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing
+      # The exact version is reviewed here and asserted by check-release-contracts.mjs; npm has
+      # no lockfile to install itself from.
+      - name: Install npm
+        run: | # zizmor: ignore[adhoc-packages]
+          npm install --global npm@11.21.2
+          test "$(npm --version)" = 11.21.2
       - name: Download package artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -102,12 +124,22 @@ jobs:
       - name: Publish package
         env:
           PACKAGE_DIR: ${{ runner.temp }}/package-${{ github.run_id }}-${{ github.run_attempt }}
+          NEXT_TAG_SCRIPT: ${{ github.workspace }}/scripts/move-next-tag.mjs
         run: |
-          mapfile -t tarballs < <(find "$PACKAGE_DIR" -maxdepth 1 -name "*.tgz" -print)
+          # Stop on the first failed command, so a failed npm publish ends the job instead of being
+          # reported as a next tag that did not move. Conditions such as `if ! node ...` are exempt.
+          set -euo pipefail
+          # A read loop rather than mapfile, so the step also runs under the bash 3.2 that macOS
+          # ships, where publish-workflow.test.mjs runs it.
+          tarballs=()
+          while IFS= read -r tarball; do
+            tarballs+=("$tarball")
+          done < <(find "$PACKAGE_DIR" -maxdepth 1 -name "*.tgz" -print | sort)
           if [ "${#tarballs[@]}" -eq 0 ]; then
             echo "No package tarball found in $PACKAGE_DIR."
             exit 1
           fi
+          next_tag_failures=()
           for tarball in "${tarballs[@]}"; do
             package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).name))')
             package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).version))')
@@ -115,7 +147,7 @@ jobs:
             if npm view "${package_name}@${package_version}" version >"$view_output" 2>&1; then
               rm "$view_output"
               echo "Skipping already published ${package_name}@${package_version}."
-              continue
+              publish_state=skipped
             else
               view_status=$?
               if ! grep -Eq '(^|[[:space:]])(E404|404)([[:space:]]|$)' "$view_output"; then
@@ -125,10 +157,24 @@ jobs:
               fi
               rm "$view_output"
               echo "Confirmed ${package_name}@${package_version} is not published."
+              # Build metadata (after +) may contain hyphens, so only the part before it decides
+              # whether this is a prerelease, as semver and move-next-tag.mjs decide.
+              version_core=${package_version%%+*}
+              dist_tag=latest
+              if [[ "$version_core" == *-* ]]; then
+                dist_tag=next
+              fi
+              npm publish "$(realpath "$tarball")" --access public --tag "$dist_tag"
+              publish_state=published
             fi
-            dist_tag=latest
-            if [[ "$package_version" == *-* ]]; then
-              dist_tag=next
+            # A stable release also moves `next` to it, so `next` is never older than `latest`
+            # (#993). The script never moves `next` backward or to a prerelease. A skipped version
+            # runs it too, so rerunning this job repairs a tag an earlier attempt could not move.
+            if ! node "$NEXT_TAG_SCRIPT" "$package_name" "$package_version" "$publish_state"; then
+              next_tag_failures+=("${package_name}@${package_version}")
             fi
-            npm publish "$(realpath "$tarball")" --access public --tag "$dist_tag"
           done
+          if [ "${#next_tag_failures[@]}" -gt 0 ]; then
+            echo "Every package is published, but next did not move for: ${next_tag_failures[*]}. The lines above name each cause and remedy." >&2
+            exit 1
+          fi

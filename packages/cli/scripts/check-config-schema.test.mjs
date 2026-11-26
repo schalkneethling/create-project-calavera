@@ -4,7 +4,6 @@ import {
   chmod,
   cp,
   mkdir,
-  mkdtemp,
   mkdtempDisposable,
   readFile,
   rm,
@@ -26,6 +25,8 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { HtmlValidate } from "html-validate";
 import packageJson from "../package.json" with { type: "json" };
 import * as prettier from "prettier";
+
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
 
@@ -80,7 +81,11 @@ import {
   resolveAiArtifacts,
 } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
-import { lockedArtifactSources, runArtifactCommand } from "../src/artifact-lifecycle.js";
+import {
+  lockedArtifactSources,
+  runArtifactCommand,
+  writtenFingerprint,
+} from "../src/artifact-lifecycle.js";
 import { integrationCatalog } from "../src/catalog.js";
 import {
   agentBootstrap,
@@ -115,12 +120,14 @@ import {
   listProfilesResponse,
   normalizeAiArtifactInputs,
   normalizeIntegrationInputs,
+  normalizeIntegrationOptions,
   projectLocalCommandCatalog,
   projectLocalCommandSteps,
   profileDefaults,
   recipeWorkflow,
   mcpComposeRecipeDescription,
   recipeToolDescriptions,
+  recipeToolInputDescriptions,
   resolveRecipeIntegrations,
   standardMcpToolNames,
   validateRecipe,
@@ -128,6 +135,7 @@ import {
   validateRecipeResponse,
   webMcpToolNames,
 } from "../src/recipe.js";
+import { webMcpToolSchemas } from "../src/tool-schemas.js";
 import { composerRegisteredToolNames } from "./composer-webmcp-tools.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -931,9 +939,9 @@ test("CLI parser accepts nested artifact lifecycle commands", () => {
   assert.equal(options.dryRun, true);
 });
 
-test("artifact migration rewrites known legacy paths without touching unrelated recipe fields", async () => {
+test("artifact migration rewrites known legacy paths without touching unrelated recipe fields", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-artifact-migrate-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-artifact-migrate-");
   try {
     process.chdir(projectDirectory);
     const recipe = {
@@ -955,9 +963,9 @@ test("artifact migration rewrites known legacy paths without touching unrelated 
   }
 });
 
-test("artifact status remains offline unless update checks are requested", async () => {
+test("artifact status remains offline unless update checks are requested", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-artifact-status-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-artifact-status-");
   try {
     process.chdir(projectDirectory);
     const result = await runArtifactCommand({
@@ -973,9 +981,9 @@ test("artifact status remains offline unless update checks are requested", async
   }
 });
 
-test("artifact status reports selected package artifacts that are not locked", async () => {
+test("artifact status reports selected package artifacts that are not locked", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-artifact-unlocked-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-artifact-unlocked-");
   try {
     process.chdir(projectDirectory);
     const recipe = {
@@ -991,7 +999,9 @@ test("artifact status reports selected package artifacts that are not locked", a
       checkUpdates: false,
     });
 
-    assert.equal(result.ok, false);
+    // Owner decision on #994: a selection that is not installed yet is the normal state between
+    // init and apply, so it is not a problem and `ok` stays true.
+    assert.equal(result.ok, true);
     assert.equal(result.artifacts.length, 1);
     assert.deepEqual(
       {
@@ -1009,13 +1019,12 @@ test("artifact status reports selected package artifacts that are not locked", a
     );
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("locked dry-run restoration uses temporary storage without project writes", async () => {
+test("locked dry-run restoration uses temporary storage without project writes", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-artifact-dry-run-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-artifact-dry-run-");
   const payloadHash = "d".repeat(64);
   try {
     process.chdir(projectDirectory);
@@ -1070,13 +1079,12 @@ test("locked dry-run restoration uses temporary storage without project writes",
     await dispose();
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("artifact install locks exact versions and targeted update preserves other artifacts", async () => {
+test("artifact install locks exact versions and targeted update preserves other artifacts", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-artifact-install-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-artifact-install-");
   const releases = new Map([
     ["skill-project-goal", "0.1.0"],
     ["skill-code-review", "0.1.0"],
@@ -1169,9 +1177,9 @@ test("artifact install locks exact versions and targeted update preserves other 
   }
 });
 
-test("artifact status includes both managed hook outputs", async () => {
+test("artifact status includes both managed hook outputs", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-artifact-hook-status-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-artifact-hook-status-");
   const artifact = artifactForId("hook-auto-approve-safe-commands");
   assert.ok(artifact);
   const registry = {
@@ -1239,13 +1247,12 @@ test("artifact status includes both managed hook outputs", async () => {
     assert.equal(edited.artifacts[0].locallyEdited, true);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("artifact commands roll back an interrupted lifecycle transaction", async () => {
+test("artifact commands roll back an interrupted lifecycle transaction", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-artifact-recovery-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-artifact-recovery-");
   try {
     process.chdir(projectDirectory);
     const transactionRoot = resolve(".calavera/.transactions/interrupted");
@@ -1266,6 +1273,7 @@ test("artifact commands roll back an interrupted lifecycle transaction", async (
             target,
             backup,
             hadTarget: true,
+            writtenHash: await writtenFingerprint(target),
           },
         ],
       })}\n`,
@@ -1283,7 +1291,6 @@ test("artifact commands roll back an interrupted lifecycle transaction", async (
     await assertPathMissing(transactionRoot);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
@@ -1294,8 +1301,8 @@ test("CLI parser ignores package-manager forwarding separators", () => {
   assert.equal(parseArgs(["apply", "--", "--dry-run"]).dryRun, true);
 });
 
-test("CLI entry point runs through package-manager-style symlinks", async () => {
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-cli-symlink-"));
+test("CLI entry point runs through package-manager-style symlinks", async (t) => {
+  const projectDirectory = await temporaryFolder(t, "calavera-cli-symlink-");
   const binPath = join(projectDirectory, "create-project-calavera");
 
   await symlink(fileURLToPath(new URL("../src/index.js", import.meta.url)), binPath);
@@ -1315,9 +1322,9 @@ test("CLI entry point runs through package-manager-style symlinks", async () => 
   );
 });
 
-test("CLI rich composer writes a schema-valid config without applying by default", async () => {
+test("CLI rich composer writes a schema-valid config without applying by default", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-rich-cli-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-rich-cli-");
 
   try {
     process.chdir(projectDirectory);
@@ -1348,9 +1355,9 @@ test("CLI rich composer writes a schema-valid config without applying by default
   }
 });
 
-test("CLI rich composer dry-run apply keeps the review boundary non-destructive", async () => {
+test("CLI rich composer dry-run apply keeps the review boundary non-destructive", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-rich-cli-apply-dry-run-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-rich-cli-apply-dry-run-");
 
   try {
     process.chdir(projectDirectory);
@@ -1382,6 +1389,33 @@ test("CLI rich composer dry-run apply keeps the review boundary non-destructive"
   } finally {
     process.chdir(originalDirectory);
   }
+});
+
+test("integrationOptions description names only Stylelint Baseline fields the validator accepts", () => {
+  const match = recipeToolInputDescriptions.integrationOptions.match(
+    /Stylelint Baseline requires (\w+), [^;]*?and accepts (\w+),/,
+  );
+  assert.ok(match, "the description names the Stylelint Baseline fields");
+  const namedFields = match.slice(1);
+
+  // A named field without a valid value here stays undefined, and the validator rejects the
+  // unknown field name, so the call must succeed and return every named field.
+  const validValues = { available: "widely", severity: "error" };
+  const options = Object.fromEntries(namedFields.map((field) => [field, validValues[field]]));
+  const normalized = normalizeIntegrationOptions({ "stylelint-baseline": options }, [
+    "stylelint-baseline",
+  ]);
+  assert.deepEqual(normalized["stylelint-baseline"], options);
+  assert.deepEqual(namedFields.toSorted(), ["available", "severity"]);
+
+  // The field the description calls required is the one the shared tool schema requires (#1051).
+  const [requiredField, optionalField] = namedFields;
+  const { required } =
+    webMcpToolSchemas().compose_recipe.inputSchema.properties.integrationOptions.properties[
+      "stylelint-baseline"
+    ];
+  assert.deepEqual(required, [requiredField]);
+  assert.ok(!required.includes(optionalField));
 });
 
 test("standard MCP workflow exposes dry-run and apply tools", () => {
@@ -1558,9 +1592,9 @@ test("Baseline MCP tools expose the same recommendation contract as Baseline cor
   });
 });
 
-test("project inspection reports package manager, files, and conflict hints", async () => {
+test("project inspection reports package manager, files, and conflict hints", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-project-inspection-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-project-inspection-");
 
   try {
     process.chdir(projectDirectory);
@@ -1609,9 +1643,9 @@ test("project inspection reports package manager, files, and conflict hints", as
   }
 });
 
-test("MCP inspect_project exposes current project conflict hints", async () => {
+test("MCP inspect_project exposes current project conflict hints", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-inspect-project-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-mcp-inspect-project-");
 
   try {
     process.chdir(projectDirectory);
@@ -1633,9 +1667,9 @@ test("MCP inspect_project exposes current project conflict hints", async () => {
   }
 });
 
-test("MCP inspect_project reports a vp create-shaped project as Vite+ managed", async () => {
+test("MCP inspect_project reports a vp create-shaped project as Vite+ managed", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-inspect-vite-plus-managed-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-mcp-inspect-vite-plus-managed-");
 
   try {
     process.chdir(projectDirectory);
@@ -1661,11 +1695,9 @@ test("MCP inspect_project reports a vp create-shaped project as Vite+ managed", 
   }
 });
 
-test("MCP inspect_project reports a plain create-vite project as unmanaged", async () => {
+test("MCP inspect_project reports a plain create-vite project as unmanaged", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(
-    join(tmpdir(), "calavera-mcp-inspect-vite-plus-unmanaged-"),
-  );
+  const projectDirectory = await temporaryFolder(t, "calavera-mcp-inspect-vite-plus-unmanaged-");
 
   try {
     process.chdir(projectDirectory);
@@ -1696,9 +1728,9 @@ test("MCP inspect_project reports a plain create-vite project as unmanaged", asy
   }
 });
 
-test("agent bootstrap dry-run previews guidance without writing files", async () => {
+test("agent bootstrap dry-run previews guidance without writing files", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-dry-run-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-dry-run-");
 
   try {
     process.chdir(projectDirectory);
@@ -1722,7 +1754,8 @@ test("agent bootstrap dry-run previews guidance without writing files", async ()
     assert.deepEqual(result.mcp, {
       harness: "skip",
       action: "manual",
-      reason: "Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+      reason:
+        "Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
     });
     assert.match(result.nextPrompt, /Use Calavera for this project/);
     await assert.rejects(() => stat("AGENTS.md"), /ENOENT/);
@@ -1731,9 +1764,9 @@ test("agent bootstrap dry-run previews guidance without writing files", async ()
   }
 });
 
-test("agent bootstrap assume-yes skips MCP auto-config without explicit harness", async () => {
+test("agent bootstrap assume-yes skips MCP auto-config without explicit harness", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-assume-yes-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-assume-yes-");
 
   try {
     process.chdir(projectDirectory);
@@ -1755,9 +1788,9 @@ test("agent bootstrap assume-yes skips MCP auto-config without explicit harness"
   }
 });
 
-test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance", async () => {
+test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-");
 
   try {
     process.chdir(projectDirectory);
@@ -1888,9 +1921,9 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
   }
 });
 
-test("agent bootstrap writes Claude Code project MCP config", async () => {
+test("agent bootstrap writes Claude Code project MCP config", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-claude-mcp-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-claude-mcp-");
 
   try {
     process.chdir(projectDirectory);
@@ -1920,9 +1953,9 @@ test("agent bootstrap writes Claude Code project MCP config", async () => {
   }
 });
 
-test("agent bootstrap writes Cursor project MCP config", async () => {
+test("agent bootstrap writes Cursor project MCP config", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-cursor-mcp-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-cursor-mcp-");
 
   try {
     process.chdir(projectDirectory);
@@ -1937,7 +1970,9 @@ test("agent bootstrap writes Cursor project MCP config", async () => {
     assert.equal(result.mcp.harness, "cursor");
     assert.equal(result.mcp.action, "write");
     assert.equal(result.mcp.path, ".cursor/mcp.json");
+    // Cursor lists `type` as required for a local server (#1089).
     assert.deepEqual(config.mcpServers.calavera, {
+      type: "stdio",
       command: "npx",
       args: [
         "--package",
@@ -1951,9 +1986,9 @@ test("agent bootstrap writes Cursor project MCP config", async () => {
   }
 });
 
-test("agent bootstrap writes Codex project MCP config", async () => {
+test("agent bootstrap writes Codex project MCP config", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-codex-mcp-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-codex-mcp-");
 
   try {
     process.chdir(projectDirectory);
@@ -1989,13 +2024,14 @@ test("agent bootstrap writes Codex project MCP config", async () => {
   }
 });
 
-test("agent bootstrap updates existing Codex MCP config idempotently", async () => {
+test("agent bootstrap updates an earlier release's Codex MCP entry idempotently and keeps an edited one", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-codex-idempotent-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-codex-idempotent-");
 
   try {
     process.chdir(projectDirectory);
     await mkdir(".codex", { recursive: true });
+    // #1205: the table an earlier release wrote for pnpm, which `--init` for npm updates.
     await writeFile(
       ".codex/config.toml",
       [
@@ -2003,8 +2039,8 @@ test("agent bootstrap updates existing Codex MCP config idempotently", async () 
         'mode = "manual"',
         "",
         "[mcp_servers.calavera]",
-        'command = "old-command"',
-        'args = ["old-arg"]',
+        'command = "pnpm"',
+        'args = ["dlx", "--package", "create-project-calavera@5.0.0", "create-project-calavera-mcp"]',
         "",
         "[mcp_servers.other]",
         'command = "node"',
@@ -2023,23 +2059,34 @@ test("agent bootstrap updates existing Codex MCP config idempotently", async () 
     assert.equal(result.mcp.action, "update");
     assert.equal(config.match(/\[mcp_servers\.calavera\]/g)?.length, 1);
     assert.match(config, /\[approval\]\nmode = "manual"/);
-    assert.match(config, /\[mcp_servers\.other\]\ncommand = "node"/);
+    assert.match(config, /\n\n\[mcp_servers\.other\]\ncommand = "node"/);
     assert.match(config, /\[mcp_servers\.calavera\]\ncommand = "npx"/);
-    assert.doesNotMatch(config, /old-command|old-arg/);
+    assert.doesNotMatch(config, /pnpm|5\.0\.0/);
     assert.match(
       config,
       new RegExp(
         `args = \\["--package", "create-project-calavera@${escapeRegExp(packageJson.version)}", "create-project-calavera-mcp"\\]`,
       ),
     );
+
+    const again = await agentBootstrap({ json: true, mcpHarness: "codex", packageManager: "npm" });
+    assert.equal(again.mcp.action, "skip");
+    assert.equal(await readFile(".codex/config.toml", "utf8"), config);
+
+    // An edited entry is a local edit: `--init` keeps it (brief C8).
+    const edited = config.replace('command = "npx"', 'command = "old-command"');
+    await writeFile(".codex/config.toml", edited);
+    const kept = await agentBootstrap({ json: true, mcpHarness: "codex", packageManager: "npm" });
+    assert.equal(kept.mcp.action, "skip");
+    assert.equal(await readFile(".codex/config.toml", "utf8"), edited);
   } finally {
     process.chdir(originalDirectory);
   }
 });
 
-test("agent bootstrap writes and merges OpenCode project MCP config", async () => {
+test("agent bootstrap writes and merges OpenCode project MCP config", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-opencode-mcp-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-opencode-mcp-");
 
   try {
     process.chdir(projectDirectory);
@@ -2079,25 +2126,29 @@ test("agent bootstrap writes and merges OpenCode project MCP config", async () =
       command: ["node", "server.js"],
       enabled: true,
     });
-    assert.deepEqual(config.mcp.calavera, {
-      type: "local",
-      command: [
-        "bunx",
-        "--package",
-        `create-project-calavera@${packageJson.version}`,
-        "create-project-calavera-mcp",
-      ],
-      enabled: true,
+    // OpenCode 2 reads servers from `mcp.servers` and connects them unless `disabled` is set, so
+    // the entry carries no `enabled` (ADR-0022, #1204). The person's server stays where it was.
+    assert.deepEqual(config.mcp.servers, {
+      calavera: {
+        type: "local",
+        command: [
+          "bunx",
+          "--package",
+          `create-project-calavera@${packageJson.version}`,
+          "create-project-calavera-mcp",
+        ],
+      },
     });
+    assert.equal(Object.hasOwn(config.mcp, "calavera"), false);
     await assert.rejects(() => stat(".agents/calavera/mcp.md"), /ENOENT/);
   } finally {
     process.chdir(originalDirectory);
   }
 });
 
-test("agent bootstrap dry-run reports MCP config without writing it", async () => {
+test("agent bootstrap dry-run reports MCP config without writing it", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-mcp-dry-run-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-mcp-dry-run-");
 
   try {
     process.chdir(projectDirectory);
@@ -2128,9 +2179,9 @@ test("agent bootstrap dry-run reports MCP config without writing it", async () =
   }
 });
 
-test("agent bootstrap falls back to manual MCP guidance when config write fails", async () => {
+test("agent bootstrap falls back to manual MCP guidance when config write fails", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-mcp-fallback-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-mcp-fallback-");
 
   try {
     process.chdir(projectDirectory);
@@ -2154,9 +2205,9 @@ test("agent bootstrap falls back to manual MCP guidance when config write fails"
   }
 });
 
-test("agent bootstrap uses devEngines package manager for MCP config", async () => {
+test("agent bootstrap uses devEngines package manager for MCP config", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-bun-mcp-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-bun-mcp-");
 
   try {
     process.chdir(projectDirectory);
@@ -2190,9 +2241,9 @@ test("agent bootstrap uses devEngines package manager for MCP config", async () 
   }
 });
 
-test("agent bootstrap uses devEngines package manager for manual MCP guidance", async () => {
+test("agent bootstrap uses devEngines package manager for manual MCP guidance", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-bun-mcp-guidance-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-bun-mcp-guidance-");
 
   try {
     process.chdir(projectDirectory);
@@ -2233,9 +2284,9 @@ test("agent bootstrap uses devEngines package manager for manual MCP guidance", 
   }
 });
 
-test("agent bootstrap rejects conflicting Calavera state path", async () => {
+test("agent bootstrap rejects conflicting Calavera state path", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-conflict-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-agent-init-conflict-");
 
   try {
     process.chdir(projectDirectory);
@@ -2251,9 +2302,9 @@ test("agent bootstrap rejects conflicting Calavera state path", async () => {
   }
 });
 
-test("apply dry runs surface managed file overwrite conflicts", async () => {
+test("apply dry runs surface managed file overwrite conflicts", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-dry-run-");
 
   try {
     process.chdir(projectDirectory);
@@ -2275,9 +2326,9 @@ test("apply dry runs surface managed file overwrite conflicts", async () => {
   }
 });
 
-test("apply dry runs allow formatting-only drift in managed JSON files", async () => {
+test("apply dry runs allow formatting-only drift in managed JSON files", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-json-format-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-dry-run-json-format-");
 
   try {
     process.chdir(projectDirectory);
@@ -2325,9 +2376,9 @@ test("apply dry runs allow formatting-only drift in managed JSON files", async (
   }
 });
 
-test("apply can re-own approved managed file drift before writing recipe updates", async () => {
+test("apply can re-own approved managed file drift before writing recipe updates", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-reown-managed-file-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-reown-managed-file-");
 
   try {
     process.chdir(projectDirectory);
@@ -2416,9 +2467,9 @@ test("apply can re-own approved managed file drift before writing recipe updates
   }
 });
 
-test("apply dry runs explain omitted scripts and managed ownership", async () => {
+test("apply dry runs explain omitted scripts and managed ownership", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-omitted-scripts-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-dry-run-omitted-scripts-");
 
   try {
     process.chdir(projectDirectory);
@@ -2467,9 +2518,9 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
   }
 });
 
-test("apply uses direct tool scripts without the run-if-files helper", async () => {
+test("apply uses direct tool scripts without the run-if-files helper", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-direct-scripts-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-direct-scripts-");
   const recipe = buildRecipe("default", ["stylelint"], "npm");
 
   try {
@@ -2515,9 +2566,9 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
   }
 });
 
-test("apply composes logical CSS Stylelint plugin metadata", async () => {
+test("apply composes logical CSS Stylelint plugin metadata", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-stylelint-logical-css-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-stylelint-logical-css-");
   const recipe = buildRecipe("default", ["stylelint-logical-css"], "npm");
 
   try {
@@ -2544,9 +2595,9 @@ test("apply composes logical CSS Stylelint plugin metadata", async () => {
   }
 });
 
-test("apply carries recipe Baseline options into the generated Stylelint rule", async () => {
+test("apply carries recipe Baseline options into the generated Stylelint rule", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-stylelint-baseline-options-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-stylelint-baseline-options-");
   const recipe = buildRecipe("default", ["stylelint-baseline"], "npm", [], {
     "stylelint-baseline": { available: 2025, severity: "error" },
   });
@@ -2570,9 +2621,9 @@ test("apply carries recipe Baseline options into the generated Stylelint rule", 
   }
 });
 
-test("Knip is managed across apply, doctor, local-edit protection, and clean", async () => {
+test("Knip is managed across apply, doctor, local-edit protection, and clean", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-knip-");
   const recipe = buildRecipe("minimal", ["knip"], "npm");
 
   try {
@@ -2619,7 +2670,7 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
     assert.equal(Object.hasOwn(packageFile.scripts, "quality"), false);
     assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")), {
       $schema: "https://unpkg.com/knip@6/schema.json",
-      ignore: [".agents/**"],
+      ignore: [".agents/**", ".calavera/**"],
       ignoreExportsUsedInFile: true,
     });
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
@@ -2677,72 +2728,156 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
     );
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("Knip config ignores .agents and upgrades an unedited config from the previous version", async () => {
+// The knip.json texts earlier releases wrote: before #747 (no ignore), and before #1320 (.agents only).
+const earlierKnipContents = [undefined, [".agents/**"]].map(
+  (ignore) =>
+    `${JSON.stringify(
+      { $schema: "https://unpkg.com/knip@6/schema.json", ignore, ignoreExportsUsedInFile: true },
+      null,
+      2,
+    )}\n`,
+);
+
+for (const previousKnipContents of earlierKnipContents) {
+  test(`Knip config ignores .agents and .calavera, and upgrades an unedited config an earlier release wrote: ${JSON.stringify(JSON.parse(previousKnipContents).ignore ?? null)}`, async (t) => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await temporaryFolder(t, "calavera-knip-upgrade-");
+    const recipe = buildRecipe("minimal", ["knip"], "npm");
+    const options = { json: true, noInstall: true, assumeYes: true };
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+
+      // Given no knip.json, when dry_run_apply runs, then the plan writes the ignore entries and nothing is on disk.
+      const dryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+      assert.equal(
+        dryRun.changes.some(({ type, path }) => type === "write" && path === "knip.json"),
+        true,
+      );
+      await assertPathMissing("knip.json", "dry-run apply must not write Knip configuration");
+
+      // Given an unedited knip.json an earlier release wrote, recorded in the state, when a dry run
+      // happens, then it is planned as a write and nothing changes on disk.
+      await applyRecipeObject(recipe, options);
+      await writeFile("knip.json", previousKnipContents);
+      const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+      const knipState = state.managedFiles.find(({ path }) => path === "knip.json");
+      knipState.hash = textHash(previousKnipContents);
+      await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+
+      const previousDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+      assert.equal(previousDryRun.changes.find(({ path }) => path === "knip.json").type, "write");
+      assert.equal(await readFile("knip.json", "utf8"), previousKnipContents);
+
+      // When apply runs, then it gains both ignore entries and a second dry run reports it unchanged.
+      await applyRecipeObject(recipe, options);
+      assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")).ignore, [
+        ".agents/**",
+        ".calavera/**",
+      ]);
+      const secondDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+      assert.equal(secondDryRun.changes.find(({ path }) => path === "knip.json").type, "unchanged");
+
+      // Given an edited knip.json, when apply runs, then it refuses and leaves the file byte-for-byte unchanged.
+      const editedContents = `${JSON.stringify({ ignoreDependencies: ["left-pad"] }, null, 2)}\n`;
+      await writeFile("knip.json", editedContents);
+      await assert.rejects(
+        () => applyRecipeObject(recipe, options),
+        /Refusing to overwrite existing managed file: knip\.json/,
+      );
+      assert.equal(await readFile("knip.json", "utf8"), editedContents);
+    } finally {
+      process.chdir(originalDirectory);
+    }
+  });
+
+  // Releases 5.0.1 to 6.0.0 recorded the hash of the unformatted text, and a person's `vp fmt` then
+  // put the ignore array on one line, so the recorded hash no longer matches the file (#1320).
+  test(`Knip config: a reformatted knip.json an earlier release wrote is updated, and a hand-edited one is refused: ${JSON.stringify(JSON.parse(previousKnipContents).ignore ?? null)}`, async (t) => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await temporaryFolder(t, "calavera-knip-reformatted-");
+    const recipe = buildRecipe("minimal", ["knip"], "npm");
+    const options = { json: true, noInstall: true, assumeYes: true };
+    const earlierValue = JSON.parse(previousKnipContents);
+    // What `vp fmt` makes of the .agents text; the text without ignore is reindented instead.
+    const reformattedContents = earlierValue.ignore
+      ? previousKnipContents.replace('[\n    ".agents/**"\n  ]', '[".agents/**"]')
+      : `${JSON.stringify(earlierValue, null, 4)}\n`;
+    assert.notEqual(reformattedContents, previousKnipContents);
+
+    /** @param {string} contents @param {boolean} recorded */
+    const placeEarlierFile = async (contents, recorded) => {
+      await writeFile("knip.json", contents);
+      const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+      state.managedFiles = state.managedFiles.filter(({ path }) => path !== "knip.json");
+      if (recorded) {
+        state.managedFiles.push({ path: "knip.json", hash: textHash(previousKnipContents) });
+      }
+      await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+    };
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+      await applyRecipeObject(recipe, options);
+      const recordedEntry = JSON.parse(
+        await readFile(".calavera/state.json", "utf8"),
+      ).managedFiles.find(({ path }) => path === "knip.json");
+      assert.deepEqual(Object.keys(recordedEntry).sort(), ["hash", "path"]);
+
+      // Given a reformatted earlier file whose recorded hash is of the unformatted text, when a dry
+      // run happens, then it is planned as a write and nothing changes on disk.
+      await placeEarlierFile(reformattedContents, true);
+      /** @returns {Promise<boolean>} */
+      const inspectionReportsConflict = async () =>
+        (await inspectProject(recipe)).findings.some(
+          ({ kind, path }) => kind === "managed-file-conflict" && path === "knip.json",
+        );
+      assert.equal(await inspectionReportsConflict(), false);
+      const dryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+      assert.equal(dryRun.changes.find(({ path }) => path === "knip.json").type, "write");
+      assert.equal(await readFile("knip.json", "utf8"), reformattedContents);
+
+      // When apply runs, then it gains both ignore entries.
+      await applyRecipeObject(recipe, options);
+      assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")).ignore, [
+        ".agents/**",
+        ".calavera/**",
+      ]);
+
+      // Given an earlier file with a hand edit, when apply runs, then it refuses and keeps the file.
+      const handEdited = `${JSON.stringify({ ...earlierValue, ignoreDependencies: ["left-pad"] }, null, 2)}\n`;
+      await placeEarlierFile(handEdited, true);
+      assert.equal(await inspectionReportsConflict(), true);
+      await assert.rejects(
+        () => applyRecipeObject(recipe, options),
+        /Refusing to overwrite existing managed file: knip\.json\. It appears to have local edits/,
+      );
+      assert.equal(await readFile("knip.json", "utf8"), handEdited);
+
+      // Given an earlier value that Calavera never recorded, when apply runs, then it refuses and keeps the file.
+      await placeEarlierFile(reformattedContents, false);
+      assert.equal(await inspectionReportsConflict(), true);
+      await assert.rejects(
+        () => applyRecipeObject(recipe, options),
+        /Refusing to overwrite existing managed file: knip\.json\. It is not recorded/,
+      );
+      assert.equal(await readFile("knip.json", "utf8"), reformattedContents);
+    } finally {
+      process.chdir(originalDirectory);
+    }
+  });
+}
+
+test("a project from an earlier release gains the worktree ignores in Stylelint and HTML Validate, and local edits are kept", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-upgrade-"));
-  const recipe = buildRecipe("minimal", ["knip"], "npm");
-  const previousKnipContents = `${JSON.stringify(
-    {
-      $schema: "https://unpkg.com/knip@6/schema.json",
-      ignoreExportsUsedInFile: true,
-    },
-    null,
-    2,
-  )}\n`;
-  const options = { json: true, noInstall: true, assumeYes: true };
-
-  try {
-    process.chdir(projectDirectory);
-    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
-    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
-
-    // Given no knip.json, when dry_run_apply runs, then the plan writes the ignore entry and nothing is on disk.
-    const dryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
-    assert.equal(
-      dryRun.changes.some(({ type, path }) => type === "write" && path === "knip.json"),
-      true,
-    );
-    await assertPathMissing("knip.json", "dry-run apply must not write Knip configuration");
-
-    // Given an unedited knip.json from the previous version, when apply runs, then it gains ignore
-    // and a second dry run reports it unchanged.
-    await applyRecipeObject(recipe, options);
-    await writeFile("knip.json", previousKnipContents);
-    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
-    const knipState = state.managedFiles.find(({ path }) => path === "knip.json");
-    knipState.hash = textHash(previousKnipContents);
-    await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
-
-    const previousDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
-    assert.equal(previousDryRun.changes.find(({ path }) => path === "knip.json").type, "write");
-    assert.equal(await readFile("knip.json", "utf8"), previousKnipContents);
-
-    await applyRecipeObject(recipe, options);
-    assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")).ignore, [".agents/**"]);
-    const secondDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
-    assert.equal(secondDryRun.changes.find(({ path }) => path === "knip.json").type, "unchanged");
-
-    // Given an edited knip.json, when apply runs, then it refuses and leaves the file byte-for-byte unchanged.
-    const editedContents = `${JSON.stringify({ ignoreDependencies: ["left-pad"] }, null, 2)}\n`;
-    await writeFile("knip.json", editedContents);
-    await assert.rejects(
-      () => applyRecipeObject(recipe, options),
-      /Refusing to overwrite existing managed file: knip\.json/,
-    );
-    assert.equal(await readFile("knip.json", "utf8"), editedContents);
-  } finally {
-    process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
-  }
-});
-
-test("a project from an earlier release gains the worktree ignores in Stylelint and HTML Validate, and local edits are kept", async () => {
-  const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-worktree-ignore-upgrade-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-worktree-ignore-upgrade-");
   const recipe = buildRecipe("minimal", ["stylelint", "html-validate"], "npm");
   const options = { json: true, noInstall: true, assumeYes: true };
   const previousHtmlIgnore = "node_modules/\ndist/\ncoverage/\n";
@@ -2811,13 +2946,12 @@ test("a project from an earlier release gains the worktree ignores in Stylelint 
     assert.equal(await readFile(".htmlvalidateignore", "utf8"), editedIgnore);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("Knip ignores unused files under .agents but still reports other unused files", async () => {
+test("Knip ignores unused files under .agents and .calavera but still reports other unused files", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-run-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-knip-run-");
   const knipBinary = fileURLToPath(
     new URL("../../../node_modules/knip/bin/knip.js", import.meta.url),
   );
@@ -2841,6 +2975,19 @@ test("Knip ignores unused files under .agents but still reports other unused fil
       join(projectDirectory, ".agents", "skills", "example", "script.mjs"),
       "export const unused = 1;\n",
     );
+    // An artifact's extracted package, as apply keeps it under .calavera/packages/ (#1320).
+    const packageScripts = join(
+      projectDirectory,
+      ".calavera",
+      "packages",
+      "example",
+      "1.0.0",
+      "payload",
+      "example",
+      "scripts",
+    );
+    await mkdir(packageScripts, { recursive: true });
+    await writeFile(join(packageScripts, "script.mjs"), "export const unused = 1;\n");
     // Write the knip.json that Calavera generates, not a hand-written one.
     const recipe = buildRecipe("minimal", ["knip"], "npm");
     process.chdir(projectDirectory);
@@ -2849,21 +2996,20 @@ test("Knip ignores unused files under .agents but still reports other unused fil
     process.chdir(originalDirectory);
 
     const cleanReport = await runKnip();
-    assert.doesNotMatch(cleanReport, /\.agents/);
+    assert.doesNotMatch(cleanReport, /\.agents|\.calavera/);
 
     await writeFile(join(projectDirectory, "orphan.js"), "export const orphan = 1;\n");
     const orphanReport = await runKnip();
     assert.match(orphanReport, /orphan\.js/);
-    assert.doesNotMatch(orphanReport, /\.agents/);
+    assert.doesNotMatch(orphanReport, /\.agents|\.calavera/);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean", async () => {
+test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-html-validate-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-html-validate-");
   const recipe = buildRecipe("minimal", ["html-validate"], "npm");
   const expectedConfig = {
     extends: ["html-validate:recommended", "html-validate:document"],
@@ -2978,13 +3124,12 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
     await assertPathMissing("scripts/lint-html.mjs");
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("Varlock scaffolds project-owned environment files across CLI, MCP, doctor, and clean", async () => {
+test("Varlock scaffolds project-owned environment files across CLI, MCP, doctor, and clean", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-varlock-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-varlock-");
   const recipe = buildRecipe("minimal", ["varlock"], "npm");
   const expectedSchema = `# @defaultSensitive=false
 # @defaultRequired=infer
@@ -3121,13 +3266,12 @@ APP_ENV=development
     assert.equal(await readFile(".gitignore", "utf8"), gitignore);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("doctor does not expect the removed run-if-files helper", async () => {
+test("doctor does not expect the removed run-if-files helper", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-doctor-no-helper-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-doctor-no-helper-");
 
   try {
     process.chdir(projectDirectory);
@@ -3153,9 +3297,9 @@ test("doctor does not expect the removed run-if-files helper", async () => {
   }
 });
 
-test("clean treats a matching managed run-if-files helper as stale", async () => {
+test("clean treats a matching managed run-if-files helper as stale", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-clean-helper-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-clean-helper-");
   const helperPath = ".calavera/run-if-files.mjs";
   const helperContents = "managed helper from an older Calavera release\n";
 
@@ -3200,9 +3344,9 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
   }
 });
 
-test("clean human output reports planned and completed deletes and locally edited skips", async () => {
+test("clean human output names each planned and completed delete and each locally edited skip once, under a heading", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-clean-output-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-clean-output-");
   const safePath = ".editorconfig";
   const safeContents = "root = true\n";
   const editedPath = "knip.json";
@@ -3258,15 +3402,17 @@ test("clean human output reports planned and completed deletes and locally edite
       { env: environment },
     );
 
+    // #331: the kept file is named once, under Files, with its reason; the sentence the JSON
+    // message adds about kept items is left out.
     assert.match(
       skipOnlyDryRunStdout,
-      /No stale managed items were safe to remove\. Kept knip\.json, because it has local edits\. Clean keeps your version\. To have clean remove an item, restore the content Calavera wrote, or delete the item yourself\./,
+      /^No stale managed items were safe to remove\.\n\nFiles:\n {2}Would skip knip\.json: Managed file has local edits \(installed=[0-9a-f]+, state=[0-9a-f]+\)\. Clean keeps your version\. To have clean remove it, restore the content Calavera wrote, or delete it yourself\.$/m,
     );
-    assert.match(
-      skipOnlyDryRunStdout,
-      /Would skip knip\.json: Managed file has local edits \(installed=[0-9a-f]+, state=[0-9a-f]+\)\. Clean keeps your version\. To have clean remove it, restore the content Calavera wrote, or delete it yourself\./,
+    assert.equal(skipOnlyDryRunStdout.match(/knip\.json/g)?.length, 1);
+    assert.equal(
+      skipOnlyJsonResult.message,
+      "No stale managed items were safe to remove. Kept knip.json, because it has local edits. Clean keeps your version. To have clean remove an item, restore the content Calavera wrote, or delete the item yourself.",
     );
-    assert.doesNotMatch(skipOnlyDryRunStdout, /^Skipped knip\.json:/m);
     assert.equal(await readFile(safePath, "utf8"), safeContents);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
 
@@ -3281,9 +3427,10 @@ test("clean human output reports planned and completed deletes and locally edite
       { env: environment },
     );
 
-    assert.match(dryRunStdout, /Dry run complete\. No files were removed\./);
-    assert.match(dryRunStdout, /Would remove \.editorconfig/);
-    assert.match(dryRunStdout, /Would skip knip\.json: Managed file has local edits/);
+    assert.match(
+      dryRunStdout,
+      /^Dry run complete\. No files were removed\.\n\nFiles:\n {2}Would remove \.editorconfig\n {2}Would skip knip\.json: Managed file has local edits/m,
+    );
     assert.equal(await readFile(safePath, "utf8"), safeContents);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
 
@@ -3295,21 +3442,19 @@ test("clean human output reports planned and completed deletes and locally edite
 
     assert.match(
       cleanStdout,
-      /Removed stale managed files\. Kept knip\.json, because it has local edits\./,
+      /^Removed stale managed files\.\n\nFiles:\n {2}Removed \.editorconfig\n {2}Skipped knip\.json: Managed file has local edits/m,
     );
-    assert.match(cleanStdout, /Removed \.editorconfig/);
-    assert.match(cleanStdout, /Skipped knip\.json: Managed file has local edits/);
+    assert.doesNotMatch(cleanStdout, /Would /);
     await assertPathMissing(safePath);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("clean says why it keeps a managed file whose record has no hash, and what to run", async () => {
+test("clean says why it keeps a managed file whose record has no hash, and what to run", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-clean-legacy-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-clean-legacy-");
   const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 
   try {
@@ -3358,13 +3503,12 @@ test("clean says why it keeps a managed file whose record has no hash, and what 
     assert.equal(await readFile("knip.json", "utf8"), "{}\n");
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("apply dry-run human output distinguishes owned writes and omitted scripts", async () => {
+test("apply dry-run human output distinguishes owned writes and omitted scripts", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-cli-dry-run-output-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-cli-dry-run-output-");
   const binPath = join(projectDirectory, "create-project-calavera");
 
   try {
@@ -3401,9 +3545,9 @@ test("apply dry-run human output distinguishes owned writes and omitted scripts"
   }
 });
 
-test("apply uses project devEngines package manager over an implicit npm recipe default", async () => {
+test("apply uses project devEngines package manager over an implicit npm recipe default", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-apply-bun-devengines-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-apply-bun-devengines-");
 
   try {
     process.chdir(projectDirectory);
@@ -3438,9 +3582,9 @@ test("apply uses project devEngines package manager over an implicit npm recipe 
   }
 });
 
-test("apply recognizes a declared npm package manager", async () => {
+test("apply recognizes a declared npm package manager", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-apply-npm-package-manager-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-apply-npm-package-manager-");
   try {
     process.chdir(projectDirectory);
     await writeFile("package.json", JSON.stringify({ scripts: {}, packageManager: "npm@11.6.0" }));
@@ -3456,9 +3600,9 @@ test("apply recognizes a declared npm package manager", async () => {
   }
 });
 
-test("apply package manager override wins over project devEngines detection", async () => {
+test("apply package manager override wins over project devEngines detection", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-apply-pm-override-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-apply-pm-override-");
 
   try {
     process.chdir(projectDirectory);
@@ -3488,9 +3632,9 @@ test("apply package manager override wins over project devEngines detection", as
   }
 });
 
-test("MCP dry_run_apply uses project devEngines package manager", async () => {
+test("MCP dry_run_apply uses project devEngines package manager", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-dry-run-bun-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-mcp-dry-run-bun-");
 
   try {
     process.chdir(projectDirectory);
@@ -3516,9 +3660,9 @@ test("MCP dry_run_apply uses project devEngines package manager", async () => {
   }
 });
 
-test("MCP apply_recipe rejects config paths outside the current workspace", async () => {
+test("MCP apply_recipe rejects config paths outside the current workspace", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-apply-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-mcp-apply-");
 
   try {
     process.chdir(projectDirectory);
@@ -3537,10 +3681,10 @@ test("MCP apply_recipe rejects config paths outside the current workspace", asyn
   }
 });
 
-test("MCP apply_recipe rejects config paths escaping through a symlink", async () => {
+test("MCP apply_recipe rejects config paths escaping through a symlink", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-symlink-"));
-  const outsideDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-outside-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-mcp-symlink-");
+  const outsideDirectory = await temporaryFolder(t, "calavera-mcp-outside-");
   try {
     process.chdir(projectDirectory);
     await symlink(outsideDirectory, "linked");
@@ -3555,14 +3699,12 @@ test("MCP apply_recipe rejects config paths escaping through a symlink", async (
     );
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
-    await rm(outsideDirectory, { force: true, recursive: true });
   }
 });
 
-test("hook apply plans both outputs and protects an unowned settings sidecar", async () => {
+test("hook apply plans both outputs and protects an unowned settings sidecar", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-hook-sidecar-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-hook-sidecar-");
   const recipe = buildRecipe("minimal", [], "npm", [
     {
       type: "hook",
@@ -3641,13 +3783,12 @@ test("hook apply plans both outputs and protects an unowned settings sidecar", a
     );
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("MCP AI-only apply preserves existing managed tooling state", async () => {
+test("MCP AI-only apply preserves existing managed tooling state", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-ai-only-apply-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-mcp-ai-only-apply-");
   const stylelintConfig = `${JSON.stringify({ plugins: ["stylelint-order"] }, null, 2)}\n`;
 
   try {
@@ -3698,9 +3839,9 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
   }
 });
 
-test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", async () => {
+test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-skills-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-skills-");
   const recipe = buildRecipe("minimal", [], "npm", [
     { type: "skill", src: "skills/frontend-engineering" },
   ]);
@@ -3749,19 +3890,21 @@ test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", as
       noInstall: true,
       assumeYes: true,
     });
-    assert.equal(
-      repeatedApply.changes.some(({ path }) => path === ".coderabbit.yaml"),
-      false,
+    // #956: a file that already matches is named once, as unchanged.
+    assert.deepEqual(
+      repeatedApply.changes
+        .filter(({ path }) => path === ".coderabbit.yaml")
+        .map(({ type }) => type),
+      ["unchanged"],
     );
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("skill apply preserves existing CodeRabbit settings and path filters", async () => {
+test("skill apply preserves existing CodeRabbit settings and path filters", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-merge-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-merge-");
   const recipe = buildRecipe("minimal", [], "npm", [
     { type: "skill", src: "skills/frontend-engineering" },
   ]);
@@ -3795,13 +3938,311 @@ test("skill apply preserves existing CodeRabbit settings and path filters", asyn
     assert.match(config, /!pnpm-lock\.yaml/);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("skill apply rejects incompatible CodeRabbit configuration before writing skills", async () => {
+const CODE_RABBIT_FILTER_LIST = [
+  '    - "!.claude/skills/**"',
+  '    - "!.agents/skills/**"',
+  '    - "!.agents/agents/claude-code/**"',
+  '    - "!.calavera/packages/**"',
+  '    - "!pnpm-lock.yaml"',
+].join("\n");
+
+// #1068: a `reviews` mapping without `path_filters`, an empty `reviews: {}`, and a file
+// with no `reviews` key each made apply throw instead of adding the filters.
+for (const { name, current, expected } of [
+  {
+    name: "a reviews mapping without path_filters",
+    current:
+      "# Team settings\nlanguage: en-US\nreviews:\n  # Keep reviews short.\n  profile: chill\n",
+    expected: `# Team settings\nlanguage: en-US\nreviews:\n  # Keep reviews short.\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "an empty reviews mapping",
+    current: "# Team settings\nlanguage: en-US\nreviews: {}\n",
+    expected: `# Team settings\nlanguage: en-US\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "no reviews key",
+    current: "# Team settings\nlanguage: en-US\n",
+    expected: `# Team settings\nlanguage: en-US\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "an empty file",
+    current: "",
+    expected: `reviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "a file that holds only a comment",
+    current: "# Team settings\n",
+    expected: `# Team settings\n\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // A local path_filters list already replaces the merged one, so adding to it changes no meaning.
+    name: "a reviews mapping with a merge key and its own path_filters",
+    current:
+      'defaults: &d\n  profile: chill\nreviews:\n  <<: *d\n  path_filters:\n    - "src/**"\n',
+    expected: `defaults: &d\n  profile: chill\nreviews:\n  <<: *d\n  path_filters:\n    - "src/**"\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // A settled file needs no change, so its anchor is no reason to stop.
+    name: "an anchored reviews mapping that already holds every filter",
+    current: `reviews: &r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\nother: *r\n`,
+    expected: `reviews: &r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\nother: *r\n`,
+  },
+  {
+    name: "an anchored path_filters list that already holds every filter",
+    current: `reviews:\n  path_filters: &p\n${CODE_RABBIT_FILTER_LIST}\nother: *p\n`,
+    expected: `reviews:\n  path_filters: &p\n${CODE_RABBIT_FILTER_LIST}\nother: *p\n`,
+  },
+  {
+    // A key whose value is null is not a merge key, and checking it must not throw.
+    name: "a reviews mapping with a null key",
+    current: "reviews:\n  null: empty key\n  profile: chill\n",
+    expected: `reviews:\n  null: empty key\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // A flow mapping that holds keys keeps the person's style, so the list is a flow list.
+    name: "a reviews flow mapping with keys",
+    current: "reviews: { profile: chill }\n",
+    expected:
+      'reviews: { profile: chill, path_filters: [ "!.claude/skills/**", "!.agents/skills/**", "!.agents/agents/claude-code/**", "!.calavera/packages/**", "!pnpm-lock.yaml" ] }\n',
+  },
+  // #1083: an update keeps Windows line endings (`\r\n`), as the `yaml` package writes `\n`.
+  {
+    name: "a file with Windows line endings",
+    current: "# Team settings\r\nlanguage: en-US\r\nreviews:\r\n  profile: chill\r\n",
+    expected:
+      `# Team settings\nlanguage: en-US\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
+  },
+  {
+    // A literal block keeps its line breaks, which are line endings of the file too.
+    name: "a file with Windows line endings and a literal block",
+    current: "notes: |\r\n  first\r\n  second\r\nreviews:\r\n  profile: chill\r\n",
+    expected:
+      `notes: |\n  first\n  second\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
+  },
+  {
+    // A file with both kinds of line ending gets Windows line endings on every line.
+    name: "a file with mixed line endings",
+    current: "language: en-US\r\nreviews:\n  profile: chill\r\n",
+    expected:
+      `language: en-US\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
+  },
+  {
+    // A settled file is left as it is, so its mixed line endings stay.
+    name: "a file with mixed line endings that already holds every filter",
+    current: `reviews:\r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+    expected: `reviews:\r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // The `yaml` package drops a byte order mark, so apply writes it back.
+    name: "a file that starts with a byte order mark",
+    current: "\uFEFFreviews:\n  profile: chill\n",
+    expected: `\uFEFFreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "a file that starts with a byte order mark and already holds every filter",
+    current: `\uFEFFreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+    expected: `\uFEFFreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // A settled file with Windows line endings needs no change, so apply leaves it alone.
+    name: "a file with Windows line endings that already holds every filter",
+    current: `reviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll("\n", "\r\n"),
+    expected: `reviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll("\n", "\r\n"),
+  },
+]) {
+  test(`skill apply adds CodeRabbit path filters as a YAML list to ${name}`, async (t) => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-add-filters-");
+    const recipe = buildRecipe("minimal", [], "npm", [
+      { type: "skill", src: "skills/frontend-engineering" },
+    ]);
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await lockArtifactFixtures(["skill-frontend-engineering"]);
+      await writeFile(".coderabbit.yaml", current);
+
+      const result = await applyRecipeObject(recipe, {
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      });
+      assert.equal(
+        result.changes.some(({ type, path }) => type === "update" && path === ".coderabbit.yaml"),
+        expected !== current,
+      );
+      assert.equal(await readFile(".coderabbit.yaml", "utf8"), expected);
+
+      const repeatedDryRun = await applyRecipeObject(recipe, {
+        dryRun: true,
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      });
+      // #956: a file that already matches is named once, as unchanged.
+      assert.deepEqual(
+        repeatedDryRun.changes
+          .filter(({ path }) => path === ".coderabbit.yaml")
+          .map(({ type }) => type),
+        ["unchanged"],
+      );
+    } finally {
+      process.chdir(originalDirectory);
+    }
+  });
+}
+
+for (const { current, error } of [
+  // #1083: a parse error names the position and the parser's code, never the parser's message,
+  // because that message quotes the file's text.
+  {
+    current: "reviews: [\n",
+    error:
+      /Cannot update \.coderabbit\.yaml: it is not valid YAML at line 2, column 1 \(BAD_INDENT\)\.$/,
+  },
+  // #1083: a top-level list or scalar made the `yaml` package throw without naming the file.
+  {
+    current: "- reviews\n- language\n",
+    error: /Cannot update \.coderabbit\.yaml: the top level must be a mapping\.$/,
+  },
+  {
+    current: "reviews\n",
+    error: /Cannot update \.coderabbit\.yaml: the top level must be a mapping\.$/,
+  },
+  // #1083: `toString` threw a message that quoted the alias name and did not name the file.
+  {
+    current: "reviews:\n  profile: *FAKE_SECRET_alias\n",
+    error:
+      /Cannot update \.coderabbit\.yaml: an alias has no anchor before it at line 2, column 12\.$/,
+  },
+  // The writer rejects an anchor with a control character, and its message quotes the anchor.
+  {
+    current: "x: &FAKE_SECRET\u0007anchor 1\nreviews:\n  profile: chill\n",
+    error: /Cannot update \.coderabbit\.yaml: the YAML writer failed \(Error\)\.$/,
+  },
+  {
+    current: "reviews: []\n",
+    error: /Cannot update \.coderabbit\.yaml: reviews must be a mapping\.$/,
+  },
+  // An empty value is null, not a missing key, so apply does not replace it.
+  {
+    current: "reviews:\n",
+    error: /Cannot update \.coderabbit\.yaml: reviews must be a mapping\.$/,
+  },
+  {
+    current: "reviews:\n  path_filters:\n",
+    error: /Cannot update \.coderabbit\.yaml: reviews\.path_filters must be an array\.$/,
+  },
+  {
+    current: 'reviews:\n  path_filters: "src/**"\n',
+    error: /Cannot update \.coderabbit\.yaml: reviews\.path_filters must be an array\.$/,
+  },
+  // A new local path_filters list would replace the list `<<` merges in, dropping "!dist/**".
+  {
+    current: 'defaults: &d {path_filters: ["!dist/**"]}\nreviews: {<<: *d, profile: chill}\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  // An explicit `!!merge` tag, a `%YAML 1.1` header, and a bare `? !!merge` key each make a
+  // merge key whose value is Symbol(<<), not the string "<<".
+  {
+    current:
+      'defaults: &d {path_filters: ["!dist/**"]}\nreviews:\n  !!merge <<: *d\n  profile: chill\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  {
+    current:
+      '%YAML 1.1\n---\ndefaults: &d {path_filters: ["!dist/**"]}\nreviews:\n  <<: *d\n  profile: chill\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  {
+    current:
+      'defaults: &d {path_filters: ["!dist/**"]}\nreviews:\n  ? !!merge\n  : *d\n  profile: chill\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  // Every alias of an anchored reviews mapping would gain the filters too.
+  {
+    current: "reviews: &r {}\nother: *r\n",
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews, which starts at line 1, column 13, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*, !pnpm-lock\.yaml$/,
+  },
+  {
+    current: 'reviews: &r\n  path_filters:\n    - "!pnpm-lock.yaml"\nother: *r\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews, which starts at line 2, column 3, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
+  },
+  // #1083: an anchor name is file text, so the message gives the anchored value's position.
+  {
+    current: "reviews: &FAKE_SECRET_x {}\nother: *FAKE_SECRET_x\n",
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews, which starts at line 1, column 25, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*, !pnpm-lock\.yaml$/,
+  },
+  // Every alias of an anchored path_filters list would gain the filters too.
+  {
+    current: 'reviews:\n  path_filters: &p\n    - "!pnpm-lock.yaml"\nother: *p\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews\.path_filters, which starts at line 3, column 5, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
+  },
+]) {
+  test(`skill apply rejects CodeRabbit configuration ${JSON.stringify(current)} before writing skills`, async (t) => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-invalid-");
+    const recipe = buildRecipe("minimal", [], "npm", [
+      { type: "skill", src: "skills/frontend-engineering" },
+    ]);
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await lockArtifactFixtures(["skill-frontend-engineering"]);
+      await writeFile(".coderabbit.yaml", current);
+
+      const rejection = await applyRecipeObject(recipe, {
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      }).then(
+        () => assert.fail("apply accepted the CodeRabbit configuration"),
+        (/** @type {unknown} */ reason) => reason,
+      );
+      assert.ok(rejection instanceof Error);
+      assert.match(rejection.message, error);
+      // #1083: no message quotes the file, so a planted value reaches neither the cause nor the
+      // stack, which `CALAVERA_DEBUG` prints.
+      assert.equal(rejection.cause, undefined);
+      assert.ok(!String(rejection.stack).includes("FAKE_SECRE"), "The stack quotes the file.");
+      await assertPathMissing(".agents/skills/frontend-engineering");
+      assert.equal(await readFile(".coderabbit.yaml", "utf8"), current);
+    } finally {
+      process.chdir(originalDirectory);
+    }
+  });
+}
+
+// #1083: the `yaml` package's message quotes the lines around a parse error, so a secret written
+// next to the error would reach the terminal and CI logs.
+test("a CodeRabbit parse error names each position without quoting the file", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-invalid-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-parse-secret-");
+  const secret = "FAKE_SECRET_9f3a7c";
+  const current = `reviews:\n  token: ${secret}\n   bad: [\n`;
   const recipe = buildRecipe("minimal", [], "npm", [
     { type: "skill", src: "skills/frontend-engineering" },
   ]);
@@ -3810,28 +4251,108 @@ test("skill apply rejects incompatible CodeRabbit configuration before writing s
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await lockArtifactFixtures(["skill-frontend-engineering"]);
-    await writeFile(".coderabbit.yaml", "reviews: []\n");
+    await writeFile(".coderabbit.yaml", current);
 
-    await assert.rejects(
-      () =>
-        applyRecipeObject(recipe, {
-          json: true,
-          noInstall: true,
-          assumeYes: true,
-        }),
-      /\.coderabbit\.yaml: reviews must be a mapping/,
+    const error = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    }).then(
+      () => assert.fail("apply accepted a .coderabbit.yaml that is not valid YAML"),
+      (/** @type {unknown} */ reason) => reason,
     );
-    await assertPathMissing(".agents/skills/frontend-engineering");
-    assert.equal(await readFile(".coderabbit.yaml", "utf8"), "reviews: []\n");
+    assert.ok(error instanceof Error);
+    assert.equal(
+      error.message,
+      "Cannot update .coderabbit.yaml: it is not valid YAML at line 2, column 10 (BLOCK_AS_IMPLICIT_KEY); line 2, column 10 (MULTILINE_IMPLICIT_KEY); line 4, column 1 (BAD_INDENT).",
+    );
+    assert.equal(error.cause, undefined);
+    assert.ok(!String(error.stack).includes("FAKE_SECRE"), "The stack quotes the file.");
+    assert.equal(await readFile(".coderabbit.yaml", "utf8"), current);
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("an unedited hook from an earlier payload updates instead of stopping as a local edit", async () => {
+// #1083: a write failure named only the path, without saying that the update stopped.
+test(
+  "a CodeRabbit configuration that cannot be written names the file and keeps the cause",
+  // A root user writes a read-only file, so the write cannot fail there.
+  { skip: process.getuid?.() === 0 && "root ignores file permissions" },
+  async (t) => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-read-only-");
+    const recipe = buildRecipe("minimal", [], "npm", [
+      { type: "skill", src: "skills/frontend-engineering" },
+    ]);
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await lockArtifactFixtures(["skill-frontend-engineering"]);
+      await writeFile(".coderabbit.yaml", "language: en-US\n");
+      await chmod(".coderabbit.yaml", 0o444);
+
+      const error = await applyRecipeObject(recipe, {
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      }).then(
+        () => assert.fail("apply wrote a read-only .coderabbit.yaml"),
+        (/** @type {unknown} */ reason) => reason,
+      );
+      assert.ok(error instanceof Error);
+      // Windows reports EPERM where macOS and Linux report EACCES.
+      assert.match(
+        error.message,
+        /^Cannot update \.coderabbit\.yaml: cannot write it \((EACCES|EPERM)\)\.$/,
+      );
+      assert.match(
+        String(/** @type {NodeJS.ErrnoException} */ (error.cause).code),
+        /^(EACCES|EPERM)$/,
+      );
+      assert.equal(await readFile(".coderabbit.yaml", "utf8"), "language: en-US\n");
+    } finally {
+      process.chdir(originalDirectory);
+    }
+  },
+);
+
+// #1083: a read failure named only the path, without saying that the update stopped.
+test("a CodeRabbit configuration that cannot be read names the file and keeps the cause", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-hook-upgrade-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-unreadable-");
+  const recipe = buildRecipe("minimal", [], "npm", [
+    { type: "skill", src: "skills/frontend-engineering" },
+  ]);
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
+    // A folder in the file's place exists but cannot be read as a file.
+    await mkdir(".coderabbit.yaml");
+
+    const error = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    }).then(
+      () => assert.fail("apply accepted a .coderabbit.yaml it cannot read"),
+      (/** @type {unknown} */ reason) => reason,
+    );
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, "Cannot update .coderabbit.yaml: cannot read it (EISDIR).");
+    assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, "EISDIR");
+    await assertPathMissing(".agents/skills/frontend-engineering");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("an unedited hook from an earlier payload updates instead of stopping as a local edit", async (t) => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await temporaryFolder(t, "calavera-hook-upgrade-");
   const id = "hook-block-dangerous-commands";
   const installedHook = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
   const recipe = buildRecipe("minimal", [], "npm", [{ id }]);
@@ -3864,19 +4385,19 @@ test("an unedited hook from an earlier payload updates instead of stopping as a 
       noInstall: true,
       assumeYes: true,
     });
-    assert.equal(
-      settled.changes.some(({ path }) => path === installedHook),
-      false,
+    // #956: a file that already matches is named once, as unchanged.
+    assert.deepEqual(
+      settled.changes.filter(({ path }) => path === installedHook).map(({ type }) => type),
+      ["unchanged"],
     );
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("non-skill AI artifacts do not add CodeRabbit configuration", async () => {
+test("non-skill AI artifacts do not add CodeRabbit configuration", async (t) => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-hook-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-coderabbit-hook-");
 
   try {
     process.chdir(projectDirectory);
@@ -3894,14 +4415,13 @@ test("non-skill AI artifacts do not add CodeRabbit configuration", async () => {
     );
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
-test("JSON apply installs dependencies without writing spinner UI to stdout", async () => {
+test("JSON apply installs dependencies without writing spinner UI to stdout", async (t) => {
   const originalDirectory = process.cwd();
   const originalPath = process.env.PATH;
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-json-apply-install-"));
+  const projectDirectory = await temporaryFolder(t, "calavera-json-apply-install-");
   const binDirectory = join(projectDirectory, "bin");
   const npmPath = join(binDirectory, "npm");
   const stdoutWrites = [];

@@ -8,8 +8,8 @@
 // PATH record what apply ran.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { delimiter, isAbsolute, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -19,14 +19,18 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { applyRecipeObject, initRecipe, parseArgs } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
+import { createEmptyState, normalizeState } from "../src/state.js";
+import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 import {
   copyReleaseFixture,
   createTemporaryFixture,
   json,
+  libraryManifest,
   plainViteManifest,
   readStubInvocations,
   writePackageManagerStubs,
+  vitePlusFixtureRelease,
   writeVitePlusStub,
 } from "./vite-plus-fixtures.mjs";
 
@@ -38,26 +42,36 @@ const CHOICES = ["create-here", "apply-at-ancestor", "abandon"];
 /**
  * A new directory inside the committed `vp create` monorepo fixture, with the recipe saved as
  * `calavera.config.json` and no package.json of its own. The workspace root declares vite-plus
- * and has a stand-in vite-plus installed; the package-manager stand-ins and the logs live outside
- * the workspace.
+ * and, unless `installed` is false, has a stand-in vite-plus installed; the package-manager
+ * stand-ins and the logs live outside the workspace.
+ *
+ * @param {{ installed?: boolean, packageManager?: "npm" | "pnpm" | "yarn" | "bun" }} [options]
+ *   `packageManager` is the recipe's, which runs the init command under create-here.
  */
-async function directoryUnderManagedWorkspace() {
-  const workspace = await copyReleaseFixture("monorepo");
+async function directoryUnderManagedWorkspace({ installed = true, packageManager = "pnpm" } = {}) {
+  const workspace = await copyReleaseFixture("monorepo", { vitePlus: installed });
   const tools = await createTemporaryFixture("manifest-choice-tools", {});
   const project = join(workspace.root, "packages/fresh");
   const vpLog = join(tools.root, "vp.log");
+  const fmtLog = join(tools.root, "vp-fmt.log");
 
   await mkdir(join(workspace.root, ".git"));
   await mkdir(project);
-  await writeFile(join(project, "calavera.config.json"), json(recipe));
+  await writeFile(
+    join(project, "calavera.config.json"),
+    json(packageManager === "pnpm" ? recipe : { ...recipe, packageManager }),
+  );
   await writePackageManagerStubs(join(tools.root, "bin"));
-  await writeVitePlusStub(workspace.root, { logPath: vpLog });
+  if (installed) {
+    await writeVitePlusStub(workspace.root, { logPath: vpLog, fmtLogPath: fmtLog });
+  }
 
   return {
     root: workspace.root,
     project,
     bin: join(tools.root, "bin"),
     vpLog,
+    fmtLog,
     packageManagerLog: join(tools.root, "package-manager.log"),
     async [Symbol.asyncDispose]() {
       await workspace[Symbol.asyncDispose]();
@@ -85,13 +99,26 @@ async function directoryUnderUnmanagedProject() {
 }
 
 /**
+ * The error that stopped a run: the issue of its JSON result with `--json`, because `--json`
+ * always prints JSON (#1227), or its standard error without.
+ *
+ * @param {string[]} args
+ * @param {{ stdout: string, stderr: string }} result
+ * @returns {string}
+ */
+function stopText(args, result) {
+  return args.includes("--json") ? JSON.parse(result.stdout).issues[0].message : result.stderr;
+}
+
+/**
  * Runs the CLI in `workspace.project` with the stand-ins first on PATH.
  *
  * @param {{ project: string, bin: string, packageManagerLog: string }} workspace
  * @param {string[]} args
+ * @param {Record<string, string>} [env] More environment variables, such as VP_STUB_FMT_FAIL_FOR.
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
-function runCli(workspace, args) {
+function runCli(workspace, args, env = {}) {
   return new Promise((resolvePromise) => {
     execFile(
       process.execPath,
@@ -104,6 +131,7 @@ function runCli(workspace, args) {
           NO_COLOR: "1",
           PATH: `${workspace.bin}${delimiter}${process.env.PATH ?? ""}`,
           STUB_LOG: workspace.packageManagerLog,
+          ...env,
         },
       },
       (error, stdout, stderr) => {
@@ -219,12 +247,13 @@ test("a non-interactive apply without a choice reports the three choices and sto
   ]) {
     const result = await runCli(workspace, args);
     assert.equal(result.code, 1, `${args.join(" ")} did not stop`);
-    assert.ok(result.stderr.includes(join(workspace.root, "package.json")), result.stderr);
+    const stop = stopText(args, result);
+    assert.ok(stop.includes(join(workspace.root, "package.json")), stop);
     for (const choice of CHOICES) {
-      assert.match(result.stderr, new RegExp(`^- ${choice}: `, "m"));
+      assert.match(stop, new RegExp(`^- ${choice}: `, "m"));
     }
-    assert.match(result.stderr, /--manifest-choice/);
-    assert.match(result.stderr, /Calavera stopped before writing anything\./);
+    assert.match(stop, /--manifest-choice/);
+    assert.match(stop, /Calavera stopped before writing anything\./);
   }
 
   assert.deepEqual(await snapshotDirectory(workspace.root), before);
@@ -273,6 +302,601 @@ test("create-here writes the manifest and the recipe's files only in the inspect
     outsideProject(before),
     "create-here wrote outside the inspected directory",
   );
+});
+
+// #961: under create-here the formatter follows the parent's Vite+ verdict, as the install command
+// and the quality script do, so the files apply writes pass the parent's vp check.
+test("create-here formats the files apply writes with vp fmt when the parent is managed by Vite+", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  /** @param {{ argv: string[] }[]} runs */
+  const formattedPaths = (runs) =>
+    runs.map(({ argv }) => argv.find((arg) => arg.startsWith("--stdin-filepath=")));
+
+  const dryRun = await runCli(workspace, [
+    "apply",
+    "--dry-run",
+    "--json",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  const plannedRuns = await readStubInvocations(workspace.fmtLog);
+  assert.ok(plannedRuns.length > 0, "the dry run did not format with vp fmt");
+  assert.ok(plannedRuns.every(({ cwd }) => cwd === workspace.project));
+
+  const applied = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const runs = (await readStubInvocations(workspace.fmtLog)).slice(plannedRuns.length);
+  assert.ok(
+    formattedPaths(runs).includes("--stdin-filepath=.calavera/state.json"),
+    `apply did not format its state file with vp fmt: ${JSON.stringify(runs)}`,
+  );
+  assert.ok(runs.every(({ cwd }) => cwd === workspace.project));
+});
+
+/**
+ * Runs `vp fmt --check` on a file in the new member from the workspace root, through the stand-in
+ * vp, which hands it to this repository's Oxfmt. The owner decided on #1182 that the root's vp
+ * check is the reference; for a JSON file, the part of vp check that can fail is vp fmt --check.
+ *
+ * @param {string} root
+ * @param {string} [file] The file's name in packages/fresh.
+ * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+function checkFromRoot(root, file = "package.json") {
+  return new Promise((resolvePromise) => {
+    execFile(
+      process.execPath,
+      [join(root, "node_modules/vite-plus/bin/vp"), "fmt", "--check", `packages/fresh/${file}`],
+      { cwd: root, timeout: CLI_TIMEOUT_MS },
+      (error, stdout, stderr) => resolvePromise({ code: error ? 1 : 0, stdout, stderr }),
+    );
+  });
+}
+
+// #1085: the package manager's init command writes package.json in its own key order, which Oxfmt
+// sorts, so apply formats the created file with the parent's vp fmt. The check runs vp fmt --check
+// from the workspace root, through the stand-in vp, which runs this repository's Oxfmt, because the
+// owner decided on #1182 that the root's vp check is the reference.
+// The default apply installs with vp add -D, which appends devDependencies as the last key, so
+// apply formats the file again after the install. Once that apply has finished, the state no
+// longer records that Calavera created the file, so a later apply leaves the person's edits alone.
+test("create-here formats the package.json it creates, so vp fmt --check from the workspace root accepts it", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const applied = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const check = await checkFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+
+  const packageJSONPath = join(workspace.project, "package.json");
+  const manifest = JSON.parse(await readFile(packageJSONPath, "utf8"));
+  assert.equal(manifest.packageManager, "pnpm@12.21.0", "init's own fields were lost");
+  assert.equal(typeof manifest.scripts?.quality, "string", "apply did not add its scripts");
+  assert.equal(typeof manifest.devDependencies?.knip, "string", "apply did not install knip");
+  const state = JSON.parse(await readFile(join(workspace.project, ".calavera/state.json"), "utf8"));
+  assert.equal(state.createdPackageJSON, undefined, "the finished apply kept its record");
+
+  // The person moves main to the end; the next apply keeps their order.
+  const { main, ...rest } = manifest;
+  const edited = { ...rest, main };
+  await writeFile(packageJSONPath, json(edited));
+  const again = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(again.code, 0, again.stderr);
+  const after = JSON.parse(await readFile(packageJSONPath, "utf8"));
+  assert.deepEqual(Object.keys(after), Object.keys(edited));
+});
+
+// #1085: a check that stops apply after init has written package.json leaves the file formatted,
+// so the run that follows, which finds a package.json and needs no manifest choice, still writes a
+// file the workspace root's vp fmt --check accepts.
+test("create-here formats the package.json it creates even when a later check stops apply", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await writeFile(join(workspace.project, "knip.json"), "{}\n");
+
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.notEqual(stopped.code, 0, "apply did not stop at the existing knip.json");
+  assert.match(stopped.stderr, /knip\.json/);
+
+  await rm(join(workspace.project, "knip.json"));
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const check = await checkFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: only a package.json apply creates is formatted. One the person already has keeps its key
+// order, because the dry run does not show that file's text.
+test("apply keeps the key order of a package.json that already exists below a Vite+ workspace", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  // Oxfmt would move keywords, author, and license above main.
+  const existing = { name: "fresh", main: "index.js", keywords: [], author: "", license: "ISC" };
+  await writeFile(join(workspace.project, "package.json"), json(existing));
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const manifest = JSON.parse(await readFile(join(workspace.project, "package.json"), "utf8"));
+  assert.deepEqual(Object.keys(manifest), [...Object.keys(existing), "scripts", "devDependencies"]);
+});
+
+// #1085: bun init writes no scripts key, so apply adds it last. A run that stops after init and
+// the run that follows still leave a file the root accepts, because the state records that
+// Calavera created package.json as soon as init has written it.
+test("create-here with Bun keeps the created package.json formatted across a stop and a retry", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ packageManager: "bun" });
+  await writeFile(join(workspace.project, "knip.json"), "{}\n");
+
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.notEqual(stopped.code, 0, "apply did not stop at the existing knip.json");
+  const state = JSON.parse(await readFile(join(workspace.project, ".calavera/state.json"), "utf8"));
+  assert.equal(
+    typeof state.createdPackageJSON?.hash,
+    "string",
+    "the stopped apply did not record the created file",
+  );
+
+  await rm(join(workspace.project, "knip.json"));
+
+  // C8: the dry run is the approval boundary, so it says that apply reorders the keys of the
+  // existing package.json, and why, in the human output and in --json.
+  const reorder = `format it with vp fmt from vite-plus ${vitePlusFixtureRelease}, which reorders its keys; Calavera or its install wrote its current text`;
+  const dryRun = await runCli(workspace, ["apply", "--dry-run"]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  // Under the line that names package.json, so the file is named once.
+  const lines = dryRun.stdout.split("\n").map((line) => line.trim());
+  const fileLine = lines.indexOf("Would update package.json");
+  assert.ok(fileLine >= 0, dryRun.stdout);
+  assert.equal(lines[fileLine + 1], `Would ${reorder}`, dryRun.stdout);
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.formatting, `Would ${reorder}`);
+  assert.equal(change.type, "update");
+  // The line names package.json, so the summary must still name it once, under a heading.
+  const planned = JSON.parse(dryRunJSON.stdout);
+  assert.deepEqual(
+    // The Vite+ report names the parent's manifest by its absolute path in a fixed statement, and
+    // listingViolations loops forever on an absolute path, so only project paths are checked.
+    listingViolations(
+      dryRun.stdout,
+      namedItems(planned).filter((item) => !isAbsolute(item)),
+      planned.vitePlus.lines,
+    ),
+    [],
+    dryRun.stdout,
+  );
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  assert.ok(
+    applied.stdout.includes(
+      `Formatted it with vp fmt from vite-plus ${vitePlusFixtureRelease}, which reordered its keys; Calavera or its install wrote the text it had before`,
+    ),
+    applied.stdout,
+  );
+
+  const check = await checkFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: the record survives every command that reads and writes the state, and a damaged value
+// stops instead of being read as a record.
+test("the state keeps the record that Calavera created package.json, and refuses any other value", () => {
+  assert.deepEqual(normalizeState({ createdPackageJSON: { hash: "abc" } }).createdPackageJSON, {
+    hash: "abc",
+  });
+  assert.equal(Object.hasOwn(normalizeState({}), "createdPackageJSON"), false);
+  assert.equal(Object.hasOwn(createEmptyState(), "createdPackageJSON"), false);
+  for (const value of [true, "abc", null, {}, { hash: "" }, { hash: 1 }]) {
+    assert.throws(
+      () => normalizeState({ createdPackageJSON: value }),
+      /Calavera state createdPackageJSON must be an object with a hash string\./,
+    );
+  }
+});
+
+// #1085: apply --no-install plans an install it does not run, so the record stays, and the apply
+// that runs the install formats the file again after vp add -D appends devDependencies.
+test("create-here with --no-install, then apply with the install, leaves a package.json the root accepts", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const skipped = await runCli(workspace, [
+    "apply",
+    "--yes",
+    "--no-install",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(skipped.code, 0, skipped.stderr);
+  const installed = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(installed.code, 0, installed.stderr);
+
+  const check = await checkFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: the record holds the hash of the text Calavera last wrote to package.json, so a file the
+// person puts in its place after a stopped apply keeps their key order.
+test("a package.json the person puts in place after a stopped create-here apply keeps its key order", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await writeFile(join(workspace.project, "knip.json"), "{}\n");
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.notEqual(stopped.code, 0, "apply did not stop at the existing knip.json");
+
+  const theirs = { version: "2.0.0", name: "fresh", type: "module", private: true };
+  await writeFile(join(workspace.project, "package.json"), json(theirs));
+  await rm(join(workspace.project, "knip.json"));
+  // The dry run names no formatting, because apply leaves the person's file as it is.
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.formatting, undefined);
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const manifest = JSON.parse(await readFile(join(workspace.project, "package.json"), "utf8"));
+  assert.deepEqual(Object.keys(manifest), [...Object.keys(theirs), "scripts", "devDependencies"]);
+  const state = JSON.parse(await readFile(join(workspace.project, ".calavera/state.json"), "utf8"));
+  assert.equal(state.createdPackageJSON, undefined, "the record of Calavera's text was kept");
+});
+
+// #1085: a format that fails after the install leaves the record of the installed text, so the
+// next apply formats the file.
+test("create-here formats the created package.json on the next apply when the format after the install fails", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  const marker = join(workspace.bin, "..", "vp-add-ran");
+
+  const failed = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"], {
+    VP_STUB_FMT_FAIL_FOR: "package.json",
+    VP_STUB_ADD_MARKER: marker,
+  });
+  assert.notEqual(failed.code, 0, "apply did not stop when vp fmt failed after the install");
+  assert.match(
+    failed.stderr,
+    /installed the recipe's development dependencies, but could not format package\.json/,
+  );
+  assert.notEqual((await checkFromRoot(workspace.root)).code, 0);
+
+  // The scripts are already set, so only the format changes package.json, and the dry run says
+  // that apply updates the file, not that it is unchanged.
+  const formatting = `Would format it with vp fmt from vite-plus ${vitePlusFixtureRelease}, which reorders its keys; Calavera or its install wrote its current text`;
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.type, "update");
+  assert.equal(change.formatting, formatting);
+  const dryRun = await runCli(workspace, ["apply", "--dry-run"]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  const lines = dryRun.stdout.split("\n").map((line) => line.trim());
+  const fileLine = lines.indexOf("Would update package.json");
+  assert.ok(fileLine >= 0, dryRun.stdout);
+  assert.equal(lines[fileLine + 1], formatting, dryRun.stdout);
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const check = await checkFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: "unchanged" means apply writes nothing, so the dry run compares the formatted text with
+// the file's bytes, not with a plain write. Here the project's formatter indents with tabs, which
+// a plain write never does.
+test("the dry run reports a created package.json the formatter would leave as it is as unchanged", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await writeFile(join(workspace.project, ".oxfmtrc.json"), json({ useTabs: true }));
+
+  const applied = await runCli(workspace, [
+    "apply",
+    "--yes",
+    "--no-install",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const packageJSONPath = join(workspace.project, "package.json");
+  const before = await readFile(packageJSONPath, "utf8");
+  assert.match(before, /\n\t"name"/, "the formatter did not indent with tabs");
+
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json", "--no-install"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.type, "unchanged");
+  assert.equal(change.formatting, undefined);
+});
+
+// #1085: an install that changes package.json and then fails leaves the record of the file's new
+// text, so the apply that runs the install again formats it.
+test("create-here formats the created package.json on the next apply when the install fails after changing it", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const failed = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"], {
+    VP_STUB_ADD_FAILS_AFTER_WRITE: "1",
+  });
+  assert.notEqual(failed.code, 0, "apply did not report the failed install");
+  // Running the install command by hand would change the text, so Calavera would leave the file
+  // unformatted; apply comes first in the remedy.
+  assert.match(
+    failed.stderr,
+    /To finish the install, run apply again, which installs and formats package\.json, or run the install command in /,
+  );
+  assert.notEqual((await checkFromRoot(workspace.root)).code, 0);
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const check = await checkFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: when formatting the created package.json fails, the file stays as init wrote it, and the
+// next apply, with a formatter that works, formats it.
+test("create-here formats the created package.json on the next apply when the first format fails", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"], {
+    VP_STUB_FMT_FAIL_FOR: "package.json",
+  });
+  assert.notEqual(stopped.code, 0, "apply did not stop when vp fmt failed");
+  assert.notEqual((await checkFromRoot(workspace.root)).code, 0);
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const check = await checkFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+/**
+ * The create-here runs that load the formatter before anything else stops them, so each reports a
+ * missing vite-plus through the formatter's error. A plain apply stops earlier, at the install
+ * plan, with a different message.
+ */
+const createHereRunsThatFormat = {
+  "apply --dry-run": ["apply", "--dry-run", "--json", "--manifest-choice", "create-here"],
+  "apply --no-install": ["apply", "--yes", "--no-install", "--manifest-choice", "create-here"],
+  "init --apply": [
+    "init",
+    "--apply",
+    "--yes",
+    "--json",
+    "--profile",
+    "minimal",
+    "--manifest-choice",
+    "create-here",
+  ],
+};
+
+/**
+ * Runs each create-here run that formats, and checks that it stops with `remedy`, without the
+ * remedy that names no directory, and without changing the inspected directory.
+ *
+ * @param {{ project: string, bin: string, packageManagerLog: string }} workspace
+ * @param {string} remedy
+ */
+async function assertEachRunStopsWith(workspace, remedy) {
+  for (const [name, args] of Object.entries(createHereRunsThatFormat)) {
+    const before = await snapshotDirectory(workspace.project);
+    const result = await runCli(workspace, args);
+    assert.equal(result.code, 1, `${name}: ${result.stderr}`);
+    const stop = stopText(args, result);
+    assert.ok(stop.includes(remedy), `${name}: ${stop}`);
+    assert.doesNotMatch(stop, /Run vp install, then/, name);
+    assert.deepEqual(await snapshotDirectory(workspace.project), before, name);
+  }
+}
+
+// #1084: under create-here, vite-plus is the parent's dependency, so the remedy for a missing
+// vite-plus names the parent, where vp install installs it, not the inspected directory.
+test("create-here under a Vite+ parent without vite-plus installed: the formatter error in apply --dry-run, apply --no-install, and init --apply says to run vp install in the parent", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ installed: false });
+  await assertEachRunStopsWith(
+    workspace,
+    `Run vp install in ${workspace.root}, then run Calavera again.`,
+  );
+});
+
+// #1084: the nearest manifest above can be managed only because a manifest further up declares
+// vite-plus. Outside a workspace, vp install in the nearest manifest's directory installs only its
+// own dependencies, so the remedy names the directory of the manifest that declares vite-plus.
+test("create-here below a member that a manifest further up manages: the remedy names the manifest that declares vite-plus", async () => {
+  await using fixture = await createTemporaryFixture("manifest-choice-declared-further-up", {
+    "package.json": json(libraryManifest),
+    "packages/member/package.json": json(plainViteManifest),
+    "packages/member/sub/calavera.config.json": json(recipe),
+  });
+  await using tools = await createTemporaryFixture("manifest-choice-declared-further-up-tools", {});
+  await mkdir(join(fixture.root, ".git"));
+  const bin = join(tools.root, "bin");
+  await writePackageManagerStubs(bin);
+
+  await assertEachRunStopsWith(
+    {
+      project: join(fixture.root, "packages/member/sub"),
+      bin,
+      packageManagerLog: join(tools.root, "package-manager.log"),
+    },
+    `Run vp install in ${fixture.root}, then run Calavera again.`,
+  );
+});
+
+test("create-here does not run vp fmt when the parent is not managed by Vite+", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  // vite-plus is installed above the inspected directory but declared nowhere, so only the
+  // verdict, not a missing package, keeps vp fmt from running.
+  const fmtLog = join(fixture.root, "vp-fmt.log");
+  await writeVitePlusStub(fixture.root, {
+    logPath: join(fixture.root, "vp.log"),
+    fmtLogPath: fmtLog,
+  });
+
+  for (const dryRun of [true, false]) {
+    await inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun,
+        assumeYes: true,
+        noInstall: true,
+        manifestChoice: "create-here",
+      }),
+    );
+  }
+  assert.deepEqual(await readStubInvocations(fmtLog), []);
+});
+
+test("init --apply with create-here formats the recipe it writes with vp fmt when the parent is managed by Vite+", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const result = await runCli(workspace, [
+    "init",
+    "--apply",
+    "--yes",
+    "--json",
+    "--profile",
+    "minimal",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(result.code, 0, result.stderr);
+  const runs = await readStubInvocations(workspace.fmtLog);
+  assert.ok(
+    runs.some(
+      ({ argv, cwd }) =>
+        argv.includes("--stdin-filepath=calavera.config.json") && cwd === workspace.project,
+    ),
+    `init did not format calavera.config.json with vp fmt: ${JSON.stringify(runs)}`,
+  );
+});
+
+test("init --apply with create-here does not run vp fmt when the parent is not managed by Vite+", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using tools = await createTemporaryFixture("manifest-choice-init-unmanaged-tools", {});
+  const bin = join(tools.root, "bin");
+  await writePackageManagerStubs(bin);
+  // vite-plus is installed above the inspected directory but declared nowhere, so only the
+  // verdict, not a missing package, keeps vp fmt from running.
+  const fmtLog = join(tools.root, "vp-fmt.log");
+  await writeVitePlusStub(fixture.root, {
+    logPath: join(tools.root, "vp.log"),
+    fmtLogPath: fmtLog,
+  });
+
+  const result = await runCli(
+    { project: fixture.project, bin, packageManagerLog: join(tools.root, "package-manager.log") },
+    [
+      "init",
+      "--apply",
+      "--yes",
+      "--json",
+      "--no-install",
+      "--profile",
+      "minimal",
+      "--manifest-choice",
+      "create-here",
+    ],
+  );
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    JSON.parse(result.stdout).applyResult,
+    "init --apply did not apply, so the test shows nothing",
+  );
+  assert.deepEqual(await readStubInvocations(fmtLog), []);
+});
+
+/** The plain init run: no --apply, so there is no manifest decision. */
+const plainInit = ["init", "--yes", "--json", "--profile", "minimal"];
+
+// #1086: plain init has no manifest decision, so it used to detect "unknown" and write the recipe
+// unformatted, which the workspace root's vp check rejects. It now formats with the parent's
+// verdict, as init --apply with create-here does (#961). The fixture writes a recipe; the test
+// removes it first, so the file after init is the one init composed.
+test("plain init below a Vite+ workspace formats the recipe so vp fmt --check from the workspace root accepts it", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await rm(join(workspace.project, "calavera.config.json"));
+
+  const result = await runCli(workspace, plainInit);
+  assert.equal(result.code, 0, result.stderr);
+
+  const check = await checkFromRoot(workspace.root, "calavera.config.json");
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+  const runs = await readStubInvocations(workspace.fmtLog);
+  assert.ok(
+    runs.some(
+      ({ argv, cwd }) =>
+        argv.includes("--stdin-filepath=calavera.config.json") && cwd === workspace.project,
+    ),
+    `init did not format calavera.config.json with vp fmt: ${JSON.stringify(runs)}`,
+  );
+  // Plain init writes only the recipe; package.json is apply's to create.
+  assert.deepEqual(Object.keys(await snapshotDirectory(workspace.project)), [
+    join(workspace.project, "calavera.config.json"),
+  ]);
+});
+
+// #1086, with #1084's remedy: the formatter loads before the wizard asks anything, so a missing
+// vite-plus stops plain init before its first prompt, with nothing written, and the remedy names
+// the parent, where vp install installs it. This test runs init in this process, so mutation
+// testing sees which lines it covers.
+test("plain init below a Vite+ workspace without vite-plus installed stops before its first prompt and says to run vp install in the parent", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ installed: false });
+  await rm(join(workspace.project, "calavera.config.json"));
+  /** @type {string[]} */
+  const asked = [];
+  const record = async (/** @type {{ message: string }} */ { message }) => {
+    asked.push(message);
+    throw new Error(`init asked: ${message}`);
+  };
+  const initPrompts = { select: record, groupMultiselect: record, confirm: record };
+
+  await assert.rejects(
+    inDirectory(workspace.project, true, () =>
+      initRecipe({ ...parseArgs(["init", "--json"]), initPrompts }),
+    ),
+    (error) =>
+      error instanceof Error &&
+      error.message.includes(`Run vp install in ${workspace.root}, then run Calavera again.`),
+  );
+  assert.deepEqual(asked, []);
+  assert.deepEqual(await snapshotDirectory(workspace.project), {});
+});
+
+test("plain init does not run vp fmt when the parent is not managed by Vite+", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using tools = await createTemporaryFixture(
+    "manifest-choice-plain-init-unmanaged-tools",
+    {},
+  );
+  // vite-plus is installed above the inspected directory but declared nowhere, so only the
+  // verdict, not a missing package, keeps vp fmt from running.
+  const fmtLog = join(tools.root, "vp-fmt.log");
+  await writeVitePlusStub(fixture.root, {
+    logPath: join(tools.root, "vp.log"),
+    fmtLogPath: fmtLog,
+  });
+  await rm(join(fixture.project, "calavera.config.json"));
+
+  const result = await runCli(
+    {
+      project: fixture.project,
+      bin: join(tools.root, "bin"),
+      packageManagerLog: join(tools.root, "package-manager.log"),
+    },
+    plainInit,
+  );
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    await readFile(join(fixture.project, "calavera.config.json"), "utf8"),
+    "init did not write the recipe, so the test shows nothing",
+  );
+  assert.deepEqual(await readStubInvocations(fmtLog), []);
 });
 
 test("apply-at-ancestor inspects the ancestor again and applies there, leaving the inspected directory untouched", async () => {
@@ -474,6 +1098,24 @@ test("init --apply under an ancestor manifest stops before writing anything unle
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
 });
 
+// #1086: init loads its formatter before the wizard, but the #430 checks come first, so below a
+// Vite+ workspace whose vite-plus is not installed, a choice other than create-here still gets the
+// create-here message, not the vp install remedy.
+test("init --apply below a Vite+ workspace without vite-plus installed stops with the create-here message unless the choice is create-here", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ installed: false });
+  const before = await snapshotDirectory(workspace.root);
+  const options = parseArgs(["init", "--apply", "--yes", "--json", "--profile", "minimal"]);
+
+  for (const manifestChoice of [undefined, "apply-at-ancestor", "abandon"]) {
+    await assert.rejects(
+      inDirectory(workspace.project, false, () => initRecipe({ ...options, manifestChoice })),
+      /init --apply writes calavera\.config\.json in .+ before it applies, so it runs only with --manifest-choice create-here\./,
+      String(manifestChoice),
+    );
+  }
+  assert.deepEqual(await snapshotDirectory(workspace.root), before);
+});
+
 test("apply-at-ancestor stops before writing anything when the ancestor already has a Calavera recipe", async () => {
   await using fixture = await directoryUnderUnmanagedProject();
   await writeFile(join(fixture.root, "calavera.config.json"), json(recipe));
@@ -493,6 +1135,79 @@ test("apply-at-ancestor stops before writing anything when the ancestor already 
     );
   }
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor stops on state without a recipe and names the state file, not a recipe", async () => {
+  // #1038: the bootstrap that `--init` runs writes the state file without a recipe, so the stop
+  // must not claim the ancestor has a recipe of its own.
+  await using fixture = await directoryUnderUnmanagedProject();
+  await mkdir(join(fixture.root, ".calavera"));
+  await writeFile(join(fixture.root, ".calavera", "state.json"), json(createEmptyState()));
+  const before = await snapshotDirectory(fixture.root);
+
+  for (const dryRun of [true, false]) {
+    const stopped = await inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun,
+        assumeYes: true,
+        noInstall: true,
+        manifestChoice: "apply-at-ancestor",
+      }),
+    ).then(
+      () => assert.fail("apply-at-ancestor did not stop"),
+      (/** @type {Error} */ error) => error.message,
+    );
+    const statePath = join(fixture.root, ".calavera", "state.json");
+    assert.ok(
+      stopped.includes(
+        `but ${statePath} already exists there, so Calavera has already recorded state for that directory.`,
+      ),
+      stopped,
+    );
+    assert.doesNotMatch(stopped, /recipe of its own/);
+    assert.match(stopped, /with a recipe for that directory instead, or choose create-here\./);
+    assert.match(stopped, /Calavera stopped before writing anything\.$/);
+  }
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor stops when the custom recipe path already exists in the ancestor", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await writeFile(join(fixture.root, "custom.json"), json(recipe));
+  const before = await snapshotDirectory(fixture.root);
+
+  await assert.rejects(
+    inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun: true,
+        assumeYes: true,
+        noInstall: true,
+        config: "custom.json",
+        manifestChoice: "apply-at-ancestor",
+      }),
+    ),
+    /custom\.json already exists there, so the directory has a Calavera recipe of its own\./,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor names the recipe when the ancestor has both a recipe and state", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await writeFile(join(fixture.root, "calavera.config.json"), json(recipe));
+  await mkdir(join(fixture.root, ".calavera"));
+  await writeFile(join(fixture.root, ".calavera", "state.json"), json(createEmptyState()));
+
+  await assert.rejects(
+    inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun: true,
+        assumeYes: true,
+        noInstall: true,
+        manifestChoice: "apply-at-ancestor",
+      }),
+    ),
+    /calavera\.config\.json already exists there, so the directory has a Calavera recipe of its own\./,
+  );
 });
 
 test("apply_recipe names the recipe file it wrote: none for abandon, the ancestor's for apply-at-ancestor", async () => {
@@ -565,6 +1280,8 @@ test("a result that plans nothing has an empty plan in every field, and still re
       "wiringChanges",
       "wiringWarnings",
       "ignoreChanges",
+      "stagingLeftovers",
+      "temporaryFolderLeftovers",
     ]) {
       assert.deepEqual(result[field], [], `${field} is not empty`);
     }
@@ -641,3 +1358,295 @@ test("apply-at-ancestor with a custom recipe path still stops when the ancestor 
   }
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
 });
+
+/**
+ * Runs a real apply-at-ancestor from `fixture.project` with `config`, which writes the recipe, and
+ * returns the error it stopped with.
+ *
+ * @param {{ project: string }} fixture
+ * @param {string} config
+ * @returns {Promise<Error>}
+ */
+async function applyAtAncestorRefusal(fixture, config) {
+  try {
+    await inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        assumeYes: true,
+        noInstall: true,
+        writeConfig: true,
+        config,
+        manifestChoice: "apply-at-ancestor",
+      }),
+    );
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    return error;
+  }
+  assert.fail(`apply-at-ancestor did not stop on ${config}`);
+}
+
+// A file symbolic link on Windows needs Developer Mode or an extra privilege.
+const fileLinkSkip = { skip: process.platform === "win32" };
+
+// #1142: an existing file at the recipe path stops apply-at-ancestor wherever it is, because apply
+// would replace it. Only a file inside the ancestor's directory, after links are resolved, is
+// called that directory's recipe; any other file is named as an existing file outside it.
+test("apply-at-ancestor stops on an existing recipe path outside the ancestor without calling it the ancestor's recipe", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "recipe.json": json(recipe),
+    "folder/keep.txt": "keep\n",
+  });
+  const before = await snapshotDirectory(fixture.root);
+  const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+  // A folder at the recipe path is named as something that exists, not as a file.
+  for (const outside of [join(elsewhere.root, "recipe.json"), join(elsewhere.root, "folder")]) {
+    const stopped = (await applyAtAncestorRefusal(fixture, outside)).message;
+    assert.ok(
+      stopped.includes(
+        `with its recipe at ${outside}, but ${outside} already exists, which is outside ${fixture.root}, and Calavera does not replace it.`,
+      ),
+      stopped,
+    );
+    assert.doesNotMatch(stopped, /recipe of its own/);
+    assert.match(stopped, /Choose a recipe path that does not exist yet, or choose create-here\./);
+    assert.match(stopped, /Calavera stopped before writing anything\.$/);
+  }
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+});
+
+test("apply-at-ancestor names the real path of a recipe path that reaches outside through a folder link", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "recipe.json": json(recipe),
+  });
+  await symlink(elsewhere.root, join(fixture.root, "via"), "junction");
+  const given = join(fixture.root, "via", "recipe.json");
+  const before = await snapshotDirectory(fixture.root);
+  const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+  // The file itself is not a link, so the message does not call it one.
+  const stopped = (await applyAtAncestorRefusal(fixture, join("..", "via", "recipe.json"))).message;
+  assert.ok(
+    stopped.includes(
+      `but ${given} already exists, at the real path ${join(elsewhere.root, "recipe.json")}, which is outside ${fixture.root}`,
+    ),
+    stopped,
+  );
+  assert.doesNotMatch(stopped, /is a link to|recipe of its own/);
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+});
+
+test(
+  "apply-at-ancestor names the file a link in the ancestor points to outside it, not the ancestor's recipe",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+      "recipe.json": json(recipe),
+    });
+    const outside = join(elsewhere.root, "recipe.json");
+    const link = join(fixture.root, "out.json");
+    await symlink(outside, link);
+    const before = await snapshotDirectory(fixture.root);
+    const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+    const stopped = (await applyAtAncestorRefusal(fixture, join("..", "out.json"))).message;
+    assert.ok(
+      stopped.includes(
+        `but ${link} is a link to ${outside}, which is outside ${fixture.root}, and Calavera does not replace it.`,
+      ),
+      stopped,
+    );
+    assert.doesNotMatch(stopped, /recipe of its own/);
+    assert.deepEqual(await snapshotDirectory(fixture.root), before);
+    assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+  },
+);
+
+test(
+  "apply-at-ancestor stops on a recipe path that links to the inspected directory's recipe",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await symlink(join(fixture.project, "calavera.config.json"), join(fixture.root, "alias.json"));
+    const before = await snapshotDirectory(fixture.root);
+
+    const stopped = (await applyAtAncestorRefusal(fixture, join("..", "alias.json"))).message;
+    // The link resolves inside the ancestor's directory, so the plain refusal names it, although the
+    // file it reaches is the inspected directory's recipe.
+    assert.match(
+      stopped,
+      /alias\.json already exists there, so the directory has a Calavera recipe/,
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  },
+);
+
+test("apply-at-ancestor stops on an existing file beside the inspected directory", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await writeFile(join(fixture.root, "sibling.json"), json(recipe));
+  const before = await snapshotDirectory(fixture.root);
+
+  const stopped = (await applyAtAncestorRefusal(fixture, join("..", "sibling.json"))).message;
+  assert.match(
+    stopped,
+    /sibling\.json already exists there, so the directory has a Calavera recipe/,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor leaves a file behind a folder link in the inspected directory unchanged", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "recipe.json": json(recipe),
+  });
+  await symlink(elsewhere.root, join(fixture.project, "linkout"), "junction");
+  const before = await snapshotDirectory(fixture.root);
+  const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+  // The path is inside the inspected directory, so it moves to the ancestor's directory, where
+  // there is no linkout folder. Apply stops before it writes the recipe there, and before any other write.
+  const stopped = await applyAtAncestorRefusal(fixture, join("linkout", "recipe.json"));
+  assert.equal(/** @type {NodeJS.ErrnoException} */ (stopped).code, "ENOENT");
+  assert.ok(
+    stopped.message.includes(join(fixture.root, "linkout", "recipe.json")),
+    stopped.message,
+  );
+  // #1208: a Calavera error that names the path, not the raw ENOENT of the write.
+  assert.ok(
+    stopped.message.startsWith(
+      `Calavera cannot write the recipe at ${join(fixture.root, "linkout", "recipe.json")}, because the folder ${join(fixture.root, "linkout")} does not exist.`,
+    ),
+    stopped.message,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+});
+
+// #1208: a dangling link reads as missing to the existence checks above, so apply-at-ancestor
+// reaches the recipe write, which refuses to create the link's target, inside the ancestor's
+// directory or outside it, before anything is written.
+test(
+  "apply-at-ancestor refuses a recipe path that is a dangling link, wherever it points",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+      "keep.txt": "keep\n",
+    });
+    const link = join(fixture.root, "dangling.json");
+
+    for (const [target, where] of [
+      [join(elsewhere.root, "created.json"), ` and is outside ${fixture.root}`],
+      [join(fixture.root, "created.json"), ""],
+    ]) {
+      await rm(link, { force: true });
+      await symlink(target, link);
+      const before = await snapshotDirectory(fixture.root);
+      const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+      const stopped = (await applyAtAncestorRefusal(fixture, join("..", "dangling.json"))).message;
+      assert.ok(
+        stopped.includes(
+          `${link} is a link to ${target}, which does not exist${where}, so writing the recipe would create ${target} instead.`,
+        ),
+        stopped,
+      );
+      assert.deepEqual(await snapshotDirectory(fixture.root), before);
+      assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+    }
+  },
+);
+
+test("apply-at-ancestor names the recipe path when its folder is a link to a missing folder", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "keep.txt": "keep\n",
+  });
+  const missing = join(elsewhere.root, "gone");
+  await symlink(missing, join(fixture.root, "gone"), "junction");
+  const before = await snapshotDirectory(fixture.root);
+  const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+  const stopped = await applyAtAncestorRefusal(fixture, join("..", "gone", "recipe.json"));
+  assert.ok(
+    stopped.message.startsWith(
+      `Calavera cannot write the recipe at ${join(fixture.root, "gone", "recipe.json")}, because ${join(fixture.root, "gone")} is a link to ${missing}, which does not exist.`,
+    ),
+    stopped.message,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+});
+
+test("apply-at-ancestor stops on a recipe path that reaches the inspected directory through a link", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await symlink(fixture.project, join(fixture.root, "linked-sub"), "junction");
+  const before = await snapshotDirectory(fixture.root);
+
+  const stopped = (
+    await applyAtAncestorRefusal(fixture, join(fixture.root, "linked-sub", "calavera.config.json"))
+  ).message;
+  assert.match(
+    stopped,
+    /calavera\.config\.json already exists there, so the directory has a Calavera recipe/,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test(
+  "apply-at-ancestor calls the ancestor's default recipe its own recipe even when it links outside, and keeps the state message",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+      "recipe.json": json(recipe),
+      "state.json": json(createEmptyState()),
+    });
+    const ancestorRecipe = join(fixture.root, "calavera.config.json");
+    await symlink(join(elsewhere.root, "recipe.json"), ancestorRecipe);
+
+    // The ancestor's default recipe is what Calavera reads there, wherever the link points, so it is
+    // that directory's recipe, with the default recipe path, a custom one, and a path that reaches
+    // it through a folder link.
+    await symlink(fixture.root, join(elsewhere.root, "rootlink"), "junction");
+    for (const config of [
+      "calavera.config.json",
+      "custom.json",
+      join(elsewhere.root, "rootlink", "calavera.config.json"),
+    ]) {
+      const recipeBefore = await snapshotDirectory(fixture.root);
+      const recipeElsewhereBefore = await snapshotDirectory(elsewhere.root);
+      const recipeStop = (await applyAtAncestorRefusal(fixture, config)).message;
+      assert.ok(
+        recipeStop.includes(
+          "already exists there, so the directory has a Calavera recipe of its own.",
+        ),
+        recipeStop,
+      );
+      assert.deepEqual(await snapshotDirectory(fixture.root), recipeBefore, config);
+      assert.deepEqual(await snapshotDirectory(elsewhere.root), recipeElsewhereBefore, config);
+    }
+
+    await rm(ancestorRecipe);
+    await mkdir(join(fixture.root, ".calavera"));
+    const statePath = join(fixture.root, ".calavera", "state.json");
+    await symlink(join(elsewhere.root, "state.json"), statePath);
+    const before = await snapshotDirectory(fixture.root);
+    const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+    const stateStop = (await applyAtAncestorRefusal(fixture, "custom.json")).message;
+    assert.ok(
+      stateStop.includes(
+        `but ${statePath} already exists there, so Calavera has already recorded state for that directory.`,
+      ),
+      stateStop,
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.root), before);
+    assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+  },
+);

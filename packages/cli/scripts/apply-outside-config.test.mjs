@@ -3,7 +3,8 @@
 // `apply` with no flags find it. The dry run lists the copy and writes nothing. An existing,
 // different calavera.config.json is a hard stop. The owner decision of 2026-11-14 sets the project
 // root: the current directory, which must contain a package.json; otherwise apply refuses and
-// names the directory, and it does not offer to create package.json.
+// names the directory, and it does not offer to create package.json. Issue #1025: `update --config`
+// follows the same rule, so the tests at the end run each check through `update` as well.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
@@ -77,10 +78,10 @@ async function inDirectory(directory, callback) {
   }
 }
 
-/** @param {string} config @param {{ dryRun?: boolean }} [options] */
-function applyOptions(config, { dryRun = false } = {}) {
+/** @param {string} config @param {{ dryRun?: boolean, command?: "apply" | "update" }} [options] */
+function applyOptions(config, { dryRun = false, command = "apply" } = {}) {
   return {
-    command: "apply",
+    command,
     config,
     dryRun,
     json: true,
@@ -306,7 +307,12 @@ for (const [name, arrange] of notARegularFile) {
           (error) => {
             assert.ok(error instanceof Error);
             assert.ok(error.message.includes(target), error.message);
-            assert.match(error.message, /not a regular file/);
+            assert.ok(
+              error.message.includes(
+                `is ${name === "a directory" ? "a directory or other entry" : "a symbolic link"}, not a regular file`,
+              ),
+              error.message,
+            );
             assert.match(error.message, /stopped before writing anything/);
             return true;
           },
@@ -416,6 +422,25 @@ test("--config naming a recipe in a subfolder of the project copies nothing, as 
   assert.deepEqual(await snapshotDirectory(fixture.project), before);
 });
 
+// Issue #1026: apply's check for a recipe in the working directory uses `isPathInside`, whose rule
+// the owner chose on #1026: only `..`, `..` and a separator, or an absolute path is outside. A
+// recipe in the project whose name starts with `..` is therefore read in place, as before.
+test("--config naming a recipe in the project whose name starts with `..` copies nothing", async () => {
+  await using fixture = await downloadedRecipe();
+  await writeFile(join(fixture.project, "..recipe.json"), recipeText);
+  const before = await snapshotDirectory(fixture.project);
+
+  const result = await inDirectory(fixture.project, () =>
+    applyRecipe(applyOptions("..recipe.json", { dryRun: true })),
+  );
+
+  assert.deepEqual(
+    result.changes.filter(({ path }) => path === "calavera.config.json"),
+    [],
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.project), before);
+});
+
 test("an outside --config from a folder without package.json is refused, even with --manifest-choice", async () => {
   // The owner decision of 2026-11-14 keeps this rule apart from the #430 manifest choice: a recipe
   // outside the working directory needs a package.json here, whatever choice is given.
@@ -437,5 +462,203 @@ test("an outside --config from a folder without package.json is refused, even wi
   assert.notEqual(code, 0);
   const output = `${stdout}${stderr}`;
   assert.ok(output.includes(`${subfolder} has no package.json`), output);
+  assert.deepEqual(await snapshotDirectory(fixture.project), before);
+});
+
+// Issue #1025: `update` applies the recipe as `apply` does, so a recipe outside the project is
+// copied by the same rule, with the same checks, and the messages name `update`.
+test("update --dry-run with an outside --config names the copy and writes nothing", async () => {
+  await using fixture = await downloadedRecipe();
+
+  const { code, stdout, stderr } = await runCli(fixture.project, [
+    "update",
+    "--config",
+    fixture.source,
+    "--dry-run",
+    "--no-install",
+    "--yes",
+  ]);
+
+  assert.equal(code, 0, stderr);
+  assert.ok(stdout.includes(`Would copy ${fixture.source} to calavera.config.json`), stdout);
+  assert.deepEqual(await readdir(fixture.project), ["package.json"]);
+});
+
+test("update with an outside --config copies the recipe byte for byte and applies it", async () => {
+  await using fixture = await downloadedRecipe();
+
+  const { code, stdout, stderr } = await runCli(fixture.project, [
+    "update",
+    "--config",
+    fixture.source,
+    "--no-install",
+    "--yes",
+  ]);
+
+  assert.equal(code, 0, stderr);
+  assert.ok(stdout.includes(`Copied ${fixture.source} to calavera.config.json`), stdout);
+  assert.equal(await readFile(join(fixture.project, "calavera.config.json"), "utf8"), recipeText);
+  assert.ok(stdout.includes(".editorconfig"), "the recipe is applied");
+  assert.equal(await readFile(fixture.source, "utf8"), recipeText, "the source is not changed");
+});
+
+test("update with the same outside --config again reports the copy unchanged", async () => {
+  await using fixture = await downloadedRecipe();
+  await inDirectory(fixture.project, () =>
+    applyRecipe(applyOptions(fixture.source, { command: "update" })),
+  );
+
+  const again = await inDirectory(fixture.project, () =>
+    applyRecipe(applyOptions(fixture.source, { dryRun: true, command: "update" })),
+  );
+
+  assert.deepEqual(
+    again.changes.filter(({ path }) => path === "calavera.config.json"),
+    [
+      {
+        type: "unchanged",
+        path: "calavera.config.json",
+        action: "write",
+        ownership: "project",
+        from: fixture.source,
+      },
+    ],
+  );
+});
+
+for (const dryRun of [true, false]) {
+  test(`update: an existing, different calavera.config.json is a hard stop (dryRun: ${dryRun})`, async () => {
+    await using fixture = await downloadedRecipe();
+    const localRecipe = `${JSON.stringify(buildRecipe("minimal", ["knip"], "npm", [], {}), null, 2)}\n`;
+    await writeFile(join(fixture.project, "calavera.config.json"), localRecipe);
+    const before = await snapshotDirectory(fixture.project);
+
+    await assert.rejects(
+      inDirectory(fixture.project, () =>
+        applyRecipe(applyOptions(fixture.source, { dryRun, command: "update" })),
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.startsWith("update refused:"), error.message);
+        assert.ok(error.message.includes(fixture.source), error.message);
+        assert.ok(
+          error.message.includes(join(fixture.project, "calavera.config.json")),
+          error.message,
+        );
+        assert.match(error.message, /run update without --config/);
+        assert.match(error.message, /stopped before writing anything/);
+        return true;
+      },
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.project), before);
+  });
+
+  test(`update: a directory without package.json is refused, naming the directory (dryRun: ${dryRun})`, async () => {
+    await using fixture = await downloadedRecipe({ withPackageJSON: false });
+
+    const { code, stdout, stderr } = await runCli(fixture.project, [
+      "update",
+      "--config",
+      fixture.source,
+      ...(dryRun ? ["--dry-run"] : []),
+      "--no-install",
+    ]);
+
+    assert.notEqual(code, 0);
+    const output = `${stdout}${stderr}`;
+    assert.ok(output.includes(`update refused: ${fixture.project} has no package.json`), output);
+    assert.match(output, /then run update again/);
+    assert.doesNotMatch(output, /Create a default package\.json/);
+    assert.deepEqual(await readdir(fixture.project), []);
+  });
+
+  test(
+    `update: a link at calavera.config.json is refused before any write (dryRun: ${dryRun})`,
+    // A file symbolic link on Windows needs Developer Mode or an extra privilege.
+    { skip: process.platform === "win32" },
+    async () => {
+      await using fixture = await downloadedRecipe();
+      const elsewhere = join(fixture.root, "elsewhere");
+      await mkdir(elsewhere);
+      await symlink(join(elsewhere, "recipe.json"), join(fixture.project, "calavera.config.json"));
+      const target = join(fixture.project, "calavera.config.json");
+      const before = await snapshotDirectory(fixture.project);
+
+      await assert.rejects(
+        inDirectory(fixture.project, () =>
+          applyRecipe(applyOptions(fixture.source, { dryRun, command: "update" })),
+        ),
+        (error) => {
+          assert.ok(error instanceof Error);
+          assert.ok(error.message.startsWith("update refused:"), error.message);
+          assert.ok(error.message.includes(target), error.message);
+          assert.match(error.message, /is a symbolic link, not a regular file/);
+          assert.match(error.message, /then run update again/);
+          return true;
+        },
+      );
+      assert.deepEqual(await snapshotDirectory(fixture.project), before);
+      assert.deepEqual(await readdir(elsewhere), [], "nothing is written where a link points");
+    },
+  );
+}
+
+for (const dryRun of [true, false]) {
+  test(`update: a directory at calavera.config.json is refused before any write (dryRun: ${dryRun})`, async () => {
+    await using fixture = await downloadedRecipe();
+    const target = join(fixture.project, "calavera.config.json");
+    await mkdir(target);
+    const before = await snapshotDirectory(fixture.project);
+
+    await assert.rejects(
+      inDirectory(fixture.project, () =>
+        applyRecipe(applyOptions(fixture.source, { dryRun, command: "update" })),
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.startsWith("update refused:"), error.message);
+        assert.ok(error.message.includes(target), error.message);
+        assert.match(error.message, /is a directory or other entry, not a regular file/);
+        return true;
+      },
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.project), before);
+  });
+}
+
+test("update in a directory without package.json is refused before it reads the recipe", async () => {
+  // In-process as well as through the CLI above, so a mutation test sees the check.
+  await using fixture = await downloadedRecipe({ withPackageJSON: false });
+
+  await assert.rejects(
+    inDirectory(fixture.project, () =>
+      applyRecipe(applyOptions(join(fixture.root, "missing.json"), { command: "update" })),
+    ),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        `update refused: ${fixture.project} has no package.json, so it is not a project root. update --config copies a recipe from outside the project into the project root, which is the current directory and must contain a package.json. Change to the project folder that contains package.json, then run update again. Calavera stopped before writing anything.`,
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(await readdir(fixture.project), []);
+});
+
+test("update --config naming a recipe in a subfolder of the project copies nothing", async () => {
+  await using fixture = await downloadedRecipe();
+  await mkdir(join(fixture.project, "recipes"));
+  await writeFile(join(fixture.project, "recipes/team.json"), recipeText);
+  const before = await snapshotDirectory(fixture.project);
+
+  const result = await inDirectory(fixture.project, () =>
+    applyRecipe(applyOptions("recipes/team.json", { dryRun: true, command: "update" })),
+  );
+
+  assert.deepEqual(
+    result.changes.filter(({ path }) => path === "calavera.config.json"),
+    [],
+  );
   assert.deepEqual(await snapshotDirectory(fixture.project), before);
 });

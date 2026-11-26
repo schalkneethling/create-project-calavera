@@ -13,9 +13,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs as parseNodeArgs, stripVTControlCharacters } from "node:util";
+import { parseArgs as parseNodeArgs, stripVTControlCharacters, styleText } from "node:util";
 
 import {
   cancel,
@@ -29,28 +29,73 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
-import { artifactForId } from "@schalkneethling/calavera-artifact-core";
-import { ExecaError, execa } from "execa";
+import {
+  resolvePackageDistTag,
+  unsupportedYarnVersion,
+} from "@schalkneethling/calavera-artifact-core/registry";
+import { execa } from "execa";
 import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import {
-  ARTIFACT_CACHE_BLOCK,
+  ARTIFACT_ACTIONS,
+  TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
+  artifactRegistry,
+  pendingTransactionRemedy,
   prepareArtifactSources,
+  refuseLinkedArtifactFolders,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
+import { doctorReportLines, phaseIssues } from "./doctor-report.js";
+import { unrecordedFileEntries } from "./phase-lines.js";
+import { deriveProjectPhase } from "./project-phase.js";
+import { integrationCatalog, removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
-  formatArtifactInput,
   formatArtifactRegistry,
-  formatIntegrationInput,
+  ignoreChangeLine,
   VP_RUNNER_NOTE_PREFIX,
 } from "./apply-summary.js";
-import { formatArtifactStatus, formatRemovedLockEntries } from "./artifact-status-report.js";
+import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
+import {
+  assertEjectConfig,
+  executeEject,
+  footprintIn,
+  planEject,
+  scriptRunsCalavera,
+  selectEjectItems,
+} from "./eject.js";
+import { ejectSummaryLines } from "./eject-summary.js";
+import {
+  initApplyDryRunLines,
+  initDefaultInputLines,
+  initRecipeSummary,
+  initSummaryLines,
+} from "./init-summary.js";
+import {
+  artifactDoctorVerdict,
+  formatArtifactStatus,
+  formatPhaseReport,
+  formatRemovedLockEntries,
+  formatTemporaryFolderLeftovers,
+} from "./artifact-status-report.js";
+import {
+  AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+  AGENT_BOOTSTRAP_GUIDANCE_FILE,
+  AGENT_BOOTSTRAP_MARKER,
+  AGENT_BOOTSTRAP_MCP_FILE,
+  AGENT_BOOTSTRAP_SECTION_END,
+  AGENT_BOOTSTRAP_SECTION_START,
+} from "./agent-bootstrap-files.js";
+import {
+  AGENT_BOOTSTRAP_NEXT_PROMPT,
+  createAgentBootstrapGuidance,
+  createAgentBootstrapGuidanceSection,
+  createAgentBootstrapMcpInstructions,
+} from "./agent-guidance.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
-  githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
   REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
@@ -58,33 +103,59 @@ import {
   assertGitHookArtifactsAtRepositoryRoot,
   assertRootOnlyIntegrationsAtRepositoryRoot,
   findRepositoryRoot,
+  gitHookArtifactRefusal,
   rootOnlyIntegrationRefusal,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
+import { assertNoLegacyEntryNeedsWiring, legacyEntryWiringRefusal } from "./ai/recipe-items.js";
 import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
 import {
-  artifactWiringFindings,
   artifactWiringWarnings,
   gitHookArtifactIds,
+  artifactWiringFindings,
   installedSkillDirectory,
   planArtifactWiring,
   wiringFilesThatMention,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
+import { EJECTED_BLOCK, EJECTED_LINES } from "./ejected-marker.js";
 import {
   declaredIgnoreLines,
   GITIGNORE_PATH,
   HTML_VALIDATE_IGNORE_PATH,
-  htmlValidateIgnoreText,
   planGitignoreBlocks,
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
-import { errorAfterCleanups } from "./utils/cleanup.js";
-import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
+import {
+  cleanupFailures,
+  errorAfterCleanups,
+  errorWithLeftovers,
+  temporaryFolderLeftovers,
+} from "./utils/cleanup.js";
+import { unique } from "./utils/unique.js";
+import {
+  createStrykerConfig,
+  formatManagedFilePlans,
+  managedFileDifference,
+  managedFileFormatterLoader,
+  plannedManagedFiles,
+} from "./managed-file-plans.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
-import { formatGeneratedText } from "./utils/generated-text.js";
+import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
+import { withDeadline } from "./utils/deadline.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
-import { detectVitePlus } from "./vite-plus-detection.js";
+import {
+  delegatesToVitePlus,
+  detectVitePlus,
+  formatterVitePlusStatus,
+  vitePlusInstallDirectory,
+} from "./vite-plus-detection.js";
+import {
+  VERSION_CHECK_DEADLINE_MS,
+  checkForNewerVersion,
+  versionCheckApplies,
+  versionNoticeText,
+} from "./version-notice.js";
 import {
   ancestorAlreadyManagedError,
   initApplyManifestChoiceError,
@@ -95,7 +166,9 @@ import {
   manifestDecisionLines,
   manifestDecisionQuestion,
   pathAtAncestor,
+  recipePathOutsideAncestorError,
 } from "./manifest-decision.js";
+import { assertRecipeWriteTarget } from "./recipe-write-target.js";
 import {
   integrationDependencies,
   resolveStrykerTestRunner,
@@ -105,7 +178,6 @@ import {
 
 import {
   aiArtifactOutputPaths,
-  assertAiSourceExists,
   buildAiApplyResult,
   hashAiInstall,
   resolveAiArtifacts,
@@ -114,15 +186,15 @@ import {
   createEmptyState,
   managedFileStateForPath,
   managedFilesFromState,
+  mergeInstalledAiArtifacts,
   normalizeState,
   optionalStringArray,
   stateShowsEarlierApply,
 } from "./state.js";
+import { planStagingLeftovers, removeStagingLeftovers } from "./staging-leftovers.js";
 import {
-  declaredManagedFiles,
   HTML_VALIDATE_WRAPPER_PATH,
   integrationConfigFiles,
-  managedFileDeclarations,
   packageManagerLockfiles,
   projectInspectionFiles,
   STRYKER_CONFIG_PATH,
@@ -138,12 +210,13 @@ import {
   projectLocalCommandCatalog,
   profileIdsForRecipe,
   profileDefaults,
+  removedProfileReplacements,
   resolveRecipeIntegrations,
   validateRecipe,
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
-import { quoteShellToken } from "./utils/shell.js";
+import { formatShellCommand, quoteShellToken } from "./utils/shell.js";
 import {
   FAILURE_OUTPUT_LINES,
   fallbackErrorText,
@@ -153,7 +226,9 @@ import {
 import {
   assertWorkspacePath,
   fileExists,
-  readBoundedTemplate,
+  isPathInside,
+  JSONParseError,
+  parseJSON,
   readJSON,
   writeJSON,
 } from "./utils/fs.js";
@@ -161,16 +236,18 @@ import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
 import { textHash } from "./utils/hash.js";
 import { logger } from "./utils/logger.js";
 import {
-  createCodexMcpTomlBlock,
-  createMcpServersJsonConfig,
-  createOpenCodeMcpJsonConfig,
+  createCursorMcpEntry,
+  openCodeMcpLocations,
   projectMcpConfigPath,
+  calaveraMcpEntries,
   writeCodexMcpConfig,
   writeMcpServersJsonConfig,
   writeOpenCodeMcpConfig,
 } from "./utils/mcp-config.js";
-import { groupedPromptOptions } from "./utils/prompt-options.js";
-import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text.js";
+import { checkOpenCodeVersion, openCodeVersionWarning } from "./utils/opencode-version.js";
+import { artifactTargetPromptOptions, groupedPromptOptions } from "./utils/prompt-options.js";
+import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
+import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
@@ -193,6 +270,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {boolean} [writeConfig]
  * @property {import("./stryker-options.js").AskForTestRunner} [askForTestRunner] Replaces the terminal prompts for the Stryker test runner, so tests can answer them (#890). It is used only where apply could prompt.
  * @property {ManifestChoice} [manifestChoice] The person's choice when the directory has no package.json of its own but a manifest above it was found (#430). Apply never makes this choice itself.
+ * @property {InitPrompts} [initPrompts] Replaces the terminal prompts that `init` itself asks, so tests can answer them in-process (#1092). The input and test runner prompts that apply also asks are not part of it.
  * @property {import("./manifest-decision.js").AskForManifestChoice} [askForManifestChoice] Replaces the terminal prompt for the manifest choice, so tests can answer it (#430). It is used only where apply could prompt, and never in a dry run.
  * @property {ArtifactLockEntry[]} [approvedArtifacts] Artifacts a dry run reported it would lock; apply installs them at exactly those versions.
  * @property {PackageManager} [packageManager]
@@ -210,7 +288,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {boolean} [init]
  * @property {string[]} [newArgs] Tokens after `--new`, forwarded verbatim to `vp create`.
  * @property {string} [newConfig] Recipe path given with `--config` before `--new`, copied into the scaffold.
- * @property {RecipeCopy} [recipeCopy] The recipe `apply --config` copies from outside the project into the project root (#603).
+ * @property {RecipeCopy} [recipeCopy] The recipe `apply --config` or `update --config` copies from outside the project into the project root (#603, #1025).
  *
  * @typedef {object} RecipeCopy
  * @property {string} source Absolute path of the recipe given with `--config`.
@@ -220,12 +298,15 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
  * @property {(dependencies: string[]) => [string, string[]]} installDev
+ * @property {(dependencies: string[]) => [string, string[]]} remove Removes the packages from every
+ *   dependency field of `package.json`, `devDependencies` included, as each package manager's
+ *   documentation says: npm uninstall, pnpm remove, yarn remove, and bun remove.
  * @property {(script: string) => string} run
  *
  * @typedef {object} PackageJSON
  * @property {Record<string, unknown>} [scripts] Values come from the project's package.json, so any JSON value is possible.
  * @property {string} [packageManager]
- * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
+ * @property {{ packageManager?: { name?: string, version?: string } | Array<{ name?: string, version?: string }> }} [devEngines]
  * @property {unknown[] | { packages?: unknown }} [workspaces]
  * @property {unknown} [devDependencies] Read only to say which planned packages the project already lists (#617).
  *
@@ -264,7 +345,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], earlierQualityValues: string[] }} ScriptPlan earlierQualityValues are the values a release before #230 wrote for a recipe whose quality the plan now omits, which the dry run names when the project's value matches one and the state file predates the qualityScript record (#230, #937)
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", from?: string, category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", from?: string, category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[], formatting?: string, warning?: string }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
@@ -275,13 +356,14 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {string[]} dependencies
  * @property {string | null} installCommand The command that installs `dependencies`, `vp add -D` in a Vite+-managed project (ADR-0012); null when the recipe has none, or when apply skips the install.
  * @property {string[]} installNotes How apply runs the install command, and what stops it, for the approval boundary.
+ * @property {string} [laterInstallCommand] The command that installs `dependencies`, to run later, present only when an apply that is not a dry run skipped the install under --no-install, where `installCommand` is null (#1022).
  * @property {string[]} integrations
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
  * @property {Change[]} changes
  * @property {ScriptChange[]} scriptChanges Each package.json script apply adds or changes, with the value it writes, so the approval boundary shows the command; a script that already has that value is not listed. Kept out of the package.json change, which a dry run reports the same before and after apply.
  * @property {string[]} pointers
- * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
+ * @property {AutoInstalledArtifact[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock, and whether the files in the project already match each one.
  * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
  * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
  * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value apply uses and where it came from.
@@ -290,6 +372,8 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {WiringChange[]} wiringChanges Each hook block and settings group apply writes into the project for a selected artifact, so the approval boundary shows the exact text.
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
  * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), and the block that keeps the artifact cache out of Git (#841), so the approval boundary shows the exact lines.
+ * @property {StagingLeftover[]} stagingLeftovers Each entry of `.calavera/.staging/` (#1034): an old copy of a locked package that apply removes, or anything else, which apply keeps and reports.
+ * @property {TemporaryFolderLeftover[]} temporaryFolderLeftovers Each temporary folder the command could not remove once it no longer needed it (#1033), with the error's code and the remedy. The command still finishes.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
  * @property {ManifestDecision} [manifestDecision] Present when the directory has no package.json of its own but a manifest above it was found (#430): the choices, and `choice` once the person made one. Without a choice, or with abandon, nothing is planned and `changes` is empty.
  *
@@ -297,6 +381,8 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {import("./integration-inputs.js").ResolvedIntegrationInput} ResolvedIntegrationInput
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  * @typedef {import("./ignore-lines.js").IgnoreChange} IgnoreChange
+ * @typedef {import("./staging-leftovers.js").StagingLeftover} StagingLeftover
+ * @typedef {import("./utils/cleanup.js").TemporaryFolderLeftover} TemporaryFolderLeftover
  *
  * @typedef {"local-edits" | "legacy-state" | "still-mentioned" | "unfollowable-link" | "unreadable"} CleanSkipReason Why clean kept a stale item, so a JSON reader can tell the reasons apart; `reason` says the same in words, with what to do.
  *
@@ -307,10 +393,21 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {WiringChange[]} wiringChanges Each hook block and settings group clean removes because the recipe no longer selects the artifact that wired it, so the dry run shows the exact text.
  * @property {string} message
  *
+ * @typedef {import("./doctor-report.js").DoctorIssue} DoctorIssue
+ *
  * @typedef {object} DoctorResult
  * @property {"doctor"} command
- * @property {boolean} ok
- * @property {{ level: "error" | "warning", message: string }[]} issues
+ * @property {boolean} ok False when any issue, item, or the phase line is an error.
+ * @property {DoctorIssue[]} issues The phase line first, then each finding, each with its check.
+ * @property {string} [phase] The project phase (ADR-0020). Absent when a record doctor cannot read
+ *   stopped it before it classified (Amendment 1).
+ * @property {{ level: DoctorIssue["level"], message: string }} [phaseLine]
+ * @property {{ id: string, selected: boolean | null, condition: { name: string, reason: string }, unrecordedFiles: { path: string, comparedVersion: string | null, matches: boolean | null, notCompared: string | null, reason: string }[] }[]} [artifacts]
+ *   Each artifact the phase function classifies, as artifacts doctor reports it.
+ * @property {{ path: string, integration: string, selected: boolean, condition: { name: string, reason: string } }[]} [managedFiles]
+ *   Each managed file the recipe declares.
+ * @property {string[] | null} [rollbackFiles] During a pending transaction, the files its rollback
+ *   would restore or remove, or null when the journal cannot be read.
  *
  * @typedef {object} InitResult
  * @property {"init"} command
@@ -345,19 +442,54 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  *
  * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
  * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
+ * @typedef {ArtifactLockEntry & { filesAlreadyMatch: boolean }} AutoInstalledArtifact An artifact apply locks; `filesAlreadyMatch` is true when the files in the project already match its payload, so apply writes none of its outputs (#1021).
  * @typedef {import("./artifact-lifecycle.js").ArtifactRegistryReport} ArtifactRegistryReport
  * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
- * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
+ * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | EjectResult | ArtifactCommandResult} CommandResult
+ *
+ * @typedef {Omit<import("./eject.js").EjectItem, "seen"> & { outcome: "planned" | "removed" | "left" | "failed" | "skipped", error?: string, keptRecord?: true }} EjectResultItem
+ *   One footprint item and what this run did with it: `planned` in a dry run, a refused run, or a
+ *   cancelled one; `left` for an item `--yes` leaves for an interactive approval. `error` holds
+ *   the cause of a failed removal, or why a skipped item was kept. `keptRecord` marks a record
+ *   that matches but that `--yes` keeps while an item it leaves needs it (Decision 5). The check
+ *   values the plan records stay internal.
+ *
+ * @typedef {object} EjectResult
+ * @property {"eject"} command
+ * @property {boolean} dryRun
+ * @property {"nothing-to-do" | "dry-run" | "refused" | "cancelled" | "ejected" | "failed"} status
+ *   `refused` is a run that cannot ask and has no `--yes`; `failed` is a run in which a removal
+ *   failed or was skipped, with every other item removed.
+ * @property {string} message
+ * @property {EjectResultItem[]} items
+ * @property {import("./eject.js").EjectReport[]} reported
+ * @property {string[]} kept
+ * @property {{ scripts: { name: string, value: string }[], devDependency?: { name: string, removeCommand: string }, problem?: string }} packageJson
+ *   What `eject` reports in `package.json` and never changes (ADR-0017, Decision 4).
+ * @property {{ directory: string, paths: string[] }[]} elsewhere A footprint in another directory
+ *   of the workspace, relative to this one, which `eject` names and does not remove (Decision 8).
+ * @property {EjectedBlockResult} [ejectedBlock] The block that marks the project as ejected,
+ *   when this run plans it (ADR-0017, Amendment 5).
+ *
+ * @typedef {Pick<import("./eject.js").EjectedBlockPlan, "path" | "type" | "lines"> & { outcome: "planned" | "written" | "left" | "skipped" | "failed", error?: string }} EjectedBlockResult
+ *   The `ejected` block and what this run did with it: `planned` before the removal, `written`,
+ *   `left` when `--yes` left items for an interactive approval, `skipped` when a removal before it
+ *   failed, and `failed` with the cause. `error` says why it was skipped or failed. The file's text
+ *   and the check value stay internal.
+ *
+ * @typedef {object} EjectRuntime
+ * @property {boolean} [interactive] Whether eject can ask for approval; `canPrompt` by default.
+ * @property {(message: string) => Promise<boolean>} [confirm] Asks for approval.
+ * @property {(lines: SummaryLine[]) => void} [show] Prints the list the approval covers.
+ * @typedef {import("./summary-lines.js").SummaryLine} SummaryLine
  */
 
 const COMPOSER_URL = "https://calavera.schalkneethling.com/";
 const STATE_FILE = ".calavera/state.json";
-const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
-const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
-const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
-const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
-const AGENT_BOOTSTRAP_SECTION_START = "<!-- calavera-agent-bootstrap:start -->";
-const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
+// #1020: a manual MCP setup always writes, updates, or skips AGENT_BOOTSTRAP_MCP_FILE, so the Changes
+// group already names it. The note points there instead of naming the file a second time.
+const AGENT_BOOTSTRAP_MANUAL_MCP_SETUP =
+  "Follow the MCP setup notes listed under Changes for manual setup.";
 export const AGENT_BOOTSTRAP_SKILL_RECIPE = {
   ai: [{ type: "skill", src: "skills/calavera" }],
 };
@@ -372,27 +504,6 @@ const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/"
 export function agentBootstrapSkillSources(skillPath = AGENT_BOOTSTRAP_SKILL_PATH) {
   return new Map([["skill-calavera", skillPath]]);
 }
-// The agent prompt `--new` and `--init` print. The repository README's "Agent prompt" step is the
-// source of this text (#840); the published package ships a short README without it, so the text
-// lives here, and tests that read the README through scripts/readme-agent-prompt.mjs fail when
-// the two differ.
-const AGENT_BOOTSTRAP_NEXT_PROMPT =
-  "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, validate and explain it, show me the dry-run result, and apply it only after I approve.";
-// The suggested first prompt in `.agents/calavera/mcp.md`, which still predates the README text.
-// Changing it changes the file's text, which must then be registered in
-// src/utils/earlier-guidance.js under the release that writes it (#830). That release is not known
-// until its version pull request, so the follow-up named in the #840 pull request moves this text
-// onto AGENT_BOOTSTRAP_NEXT_PROMPT then, together with both copies of the Calavera skill.
-const AGENT_BOOTSTRAP_MCP_NOTES_PROMPT =
-  "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
-const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
-// A file that does not exist, so Stryker skips its tsconfig preprocessing (createStrykerConfig).
-const STRYKER_SKIPPED_TSCONFIG = "stryker-skips-tsconfig-preprocessing.json";
-// The arguments the tap runner passes to node for each test file: the tap reporter, which the
-// runner parses, then Stryker's coverage hook and the test file (#736). These are the runner's
-// defaults in 10.1.1 (dist/schema/tap-runner-options.json); the config states them so that the
-// dry run shows them and a change of default cannot change what runs.
-const STRYKER_TAP_NODE_ARGS = ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"];
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -406,51 +517,35 @@ const VARLOCK_GITIGNORE_COMMENTS = [
   "# Varlock recommends committing non-local .env.* files.",
   "# Review broader existing ignore rules before opting into that convention.",
 ];
-const VARLOCK_GITIGNORE_LINES = ["!.env.schema", ".env.local", ".env.*.local"];
-const VARLOCK_POINTER =
-  "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
+const VARLOCK_GITIGNORE_LINES = [`!${VARLOCK_SCHEMA_PATH}`, ".env.local", ".env.*.local"];
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
   npm: {
     init: ["npm", ["init", "-y"]],
     installDev: (dependencies) => ["npm", ["install", "--save-dev", ...dependencies]],
+    remove: (dependencies) => ["npm", ["uninstall", ...dependencies]],
     run: (script) => `npm run ${script}`,
   },
   pnpm: {
     init: ["pnpm", ["init"]],
     installDev: (dependencies) => ["pnpm", ["add", "--save-dev", ...dependencies]],
+    remove: (dependencies) => ["pnpm", ["remove", ...dependencies]],
     run: (script) => `pnpm ${script}`,
   },
   yarn: {
     init: ["yarn", ["init", "-y"]],
     installDev: (dependencies) => ["yarn", ["add", "--dev", ...dependencies]],
+    remove: (dependencies) => ["yarn", ["remove", ...dependencies]],
     run: (script) => `yarn ${script}`,
   },
   bun: {
     init: ["bun", ["init", "-y"]],
     installDev: (dependencies) => ["bun", ["add", "--dev", ...dependencies]],
+    remove: (dependencies) => ["bun", ["remove", ...dependencies]],
     run: (script) => `bun run ${script}`,
   },
 };
-
-/**
- * Whether apply delegates to Vite+, both for the development dependency
- * install (ADR-0012) and for the checks the generated `quality` script runs
- * (ADR-0013): the project is managed, or it has no manifest of its own and the
- * nearest ancestor that decides is managed, as in a new workspace member of a
- * Vite+ workspace. The second case keeps ADR-0001's `unknown` verdict for
- * reporting, and only keeps the install away from the package manager on
- * `PATH` (ADR-0012, Decision 1).
- *
- * @param {VitePlusDetection} detection
- */
-function delegatesToVitePlus(detection) {
-  return (
-    detection.status === "managed" ||
-    (detection.status === "unknown" && detection.ancestor?.status === "managed")
-  );
-}
 
 /**
  * The member globs of the workspace whose root is `directory`, as the package
@@ -493,11 +588,7 @@ async function workspacePackagePatterns(directory, packageJSON, packageManager) 
  * Whether the workspace root or any member defines a `test` script, which is
  * what `vp run -r test` needs: it selects every package, including the root,
  * runs each one's `test` script, and fails with `Task "test" not found` when
- * none has one. Members are found as npm's `@npmcli/map-workspaces` and pnpm
- * find them: each pattern names directories holding a `package.json`; a
- * pattern starting with an odd number of `!` excludes directories, and a
- * leading `./` or `/` is ignored. `node_modules` is never searched. Unlike npm,
- * an exclusion applies whatever its position in the list.
+ * none has one. `workspaceMemberManifests` finds the members.
  *
  * @param {string} directory
  * @param {PackageJSON | undefined} packageJSON
@@ -508,6 +599,32 @@ async function workspaceDefinesTestScript(directory, packageJSON, patterns) {
     return true;
   }
 
+  for await (const manifestPath of workspaceMemberManifests(directory, patterns)) {
+    try {
+      const manifest = JSON.parse(await readFile(join(directory, manifestPath), "utf8"));
+      if (typeof manifest?.scripts?.test === "string") {
+        return true;
+      }
+    } catch {
+      // An unreadable member manifest defines no script vp run can run.
+    }
+  }
+
+  return false;
+}
+
+/**
+ * The `package.json` of each workspace member, relative to the workspace root `directory`.
+ * Members are found as npm's `@npmcli/map-workspaces` and pnpm find them: each pattern names
+ * directories holding a `package.json`; a pattern starting with an odd number of `!` excludes
+ * directories, and a leading `./` or `/` is ignored. `node_modules` is never searched. Unlike npm,
+ * an exclusion applies whatever its position in the list.
+ *
+ * @param {string} directory
+ * @param {string[]} patterns
+ * @returns {AsyncGenerator<string>}
+ */
+async function* workspaceMemberManifests(directory, patterns) {
   /** @type {string[]} */
   const included = [];
   /** @type {string[]} */
@@ -522,21 +639,10 @@ async function workspaceDefinesTestScript(directory, packageJSON, patterns) {
     (negation.length % 2 === 1 ? excluded : included).push(cleaned);
   }
 
-  for await (const manifestPath of glob(
+  yield* glob(
     included.map((pattern) => `${pattern}/package.json`),
     { cwd: directory, exclude: excluded },
-  )) {
-    try {
-      const manifest = JSON.parse(await readFile(join(directory, manifestPath), "utf8"));
-      if (typeof manifest?.scripts?.test === "string") {
-        return true;
-      }
-    } catch {
-      // An unreadable member manifest defines no script vp run can run.
-    }
-  }
-
-  return false;
+  );
 }
 
 /**
@@ -962,28 +1068,43 @@ export function devDependencyInstallCommand(
 }
 
 /**
- * A command as it can be pasted into a shell. Arguments that are not plain
- * words are quoted: in single quotes on POSIX shells, where a backslash is
- * not a plain word character, and in cmd-style double quotes on Windows,
- * where it is a path separator, so a Node.js path under `Program Files` stays
- * one argument (ADR-0012, Open questions).
+ * The command that removes development dependencies, which `eject` reports for the
+ * `create-project-calavera` dependency and never runs (ADR-0017, Decision 4). It follows
+ * `devDependencyInstallCommand`: `vp remove` when Vite+ manages the project, and the package
+ * manager's own command otherwise. npm, pnpm, Bun, and Yarn 2 or later need no flag at the root of
+ * a workspace, and Calavera does not support Yarn 1, the one that does (ADR-0023).
+ *
+ * @param {PackageManager} packageManager
+ * @param {VitePlusDetection} detection
+ * @param {string[]} dependencies
+ * @returns {[string, string[]]}
+ */
+export function devDependencyRemoveCommand(packageManager, detection, dependencies) {
+  return delegatesToVitePlus(detection)
+    ? ["vp", ["remove", ...dependencies]]
+    : packageManagerCommands[packageManager].remove(dependencies);
+}
+
+/**
+ * A command as it can be pasted into a shell. On POSIX shells each argument
+ * goes through `quoteShellToken`, which single-quotes anything zsh or bash
+ * would split or expand, including a backslash and a leading `=` (#1037,
+ * #1026). On Windows an argument that is not a plain word is quoted in
+ * cmd-style double quotes, and a backslash counts as a plain word character
+ * because it is a path separator, so a Node.js path under `Program Files`
+ * stays one argument (ADR-0012, Open questions).
  *
  * @param {[string, string[]]} command
  * @param {NodeJS.Platform} [platform]
  */
 export function formatCommand([command, commandArgs], platform = process.platform) {
-  const plainWord = platform === "win32" ? /^[\w@%+=:,./\\-]+$/ : /^[\w@%+=:,./-]+$/;
+  const parts = [command, ...commandArgs];
+  if (platform !== "win32") {
+    return parts.map(quoteShellToken).join(" ");
+  }
 
-  return [command, ...commandArgs]
-    .map((part) => {
-      if (plainWord.test(part)) {
-        return part;
-      }
-
-      return platform === "win32"
-        ? `"${part.replaceAll('"', '\\"')}"`
-        : `'${part.replaceAll("'", "'\\''")}'`;
-    })
+  return parts
+    .map((part) => (/^[\w@%+=:,./\\-]+$/.test(part) ? part : `"${part.replaceAll('"', '\\"')}"`))
     .join(" ");
 }
 
@@ -1086,14 +1207,7 @@ async function resolveProjectVpBin(projectDirectory) {
 
   const packageDirectory = dirname(manifestPath);
   const binPath = resolve(packageDirectory, bin);
-  const fromPackage = relative(packageDirectory, binPath);
-
-  if (
-    fromPackage === "" ||
-    fromPackage === ".." ||
-    fromPackage.startsWith(`..${sep}`) ||
-    isAbsolute(fromPackage)
-  ) {
+  if (relative(packageDirectory, binPath) === "" || !isPathInside(packageDirectory, binPath)) {
     throw new Error(`${manifestPath} declares a vp bin outside the vite-plus package: ${bin}`);
   }
 
@@ -1315,15 +1429,43 @@ function assertSupportedMcpHarness(harness) {
 }
 
 /**
+ * Calavera's own arguments, without the `--` tokens, and the index of `--new` in `rawArgs`, or
+ * -1. `--new` ends Calavera's own arguments (ADR-0010). The split happens before `--` tokens are
+ * removed, so a `--` meant for `vp create` survives.
+ *
+ * @param {string[]} rawArgs
+ */
+function calaveraArgs(rawArgs) {
+  const newIndex = rawArgs.findIndex((arg) => arg.trim() === "--new");
+  const ownArgs = newIndex === -1 ? rawArgs : rawArgs.slice(0, newIndex);
+  return { newIndex, args: ownArgs.filter((arg) => arg.trim() !== "--") };
+}
+
+/**
+ * The command parsed arguments name: `--help`, then `--new`, then `--init`, then the first
+ * positional, and `init` when there is none.
+ *
+ * @param {Record<string, unknown>} values
+ * @param {string[]} positionals
+ * @param {number} newIndex
+ * @returns {string}
+ */
+function commandFor(values, positionals, newIndex) {
+  return values.help
+    ? "help"
+    : newIndex !== -1
+      ? "new"
+      : values.init
+        ? "agent-init"
+        : (positionals[0] ?? "init");
+}
+
+/**
  * @param {string[]} rawArgs
  * @returns {CliOptions}
  */
 export function parseArgs(rawArgs) {
-  // `--new` ends Calavera's own arguments (ADR-0010). The split happens before
-  // `--` tokens are removed, so a `--` meant for `vp create` survives.
-  const newIndex = rawArgs.findIndex((arg) => arg.trim() === "--new");
-  const ownArgs = newIndex === -1 ? rawArgs : rawArgs.slice(0, newIndex);
-  const args = ownArgs.filter((arg) => arg.trim() !== "--");
+  const { newIndex, args } = calaveraArgs(rawArgs);
   const { values, positionals } = parseNodeArgs({
     args,
     options: cliParseOptions,
@@ -1338,13 +1480,7 @@ export function parseArgs(rawArgs) {
   const manifestChoice = optionalStringValue(values["manifest-choice"]);
   /** @type {CliOptions} */
   const parsed = {
-    command: values.help
-      ? "help"
-      : newIndex !== -1
-        ? "new"
-        : values.init
-          ? "agent-init"
-          : (positionals[0] ?? "init"),
+    command: commandFor(values, positionals, newIndex),
     config: optionalStringValue(values.config) ?? CONFIG_FILE,
     dryRun: values["dry-run"] === true,
     json: values.json === true,
@@ -1462,14 +1598,6 @@ function recipeFromJSON(recipe, path) {
 }
 
 /**
- * @param {Array<string | null | undefined | false>} values
- * @returns {string[]}
- */
-function unique(values) {
-  return [...new Set(values.filter(isNotEmptyString))];
-}
-
-/**
  * @returns {Promise<CalaveraState>}
  */
 async function readStateIfPresent() {
@@ -1496,9 +1624,13 @@ async function formatStateText(state, loadFormatter) {
 
 /**
  * @param {PackageJSON} [packageJSON]
+ * @param {string} [directory] Where to look for lockfiles; the current directory by default.
  * @returns {PackageManager | undefined}
  */
-function detectPackageManager(packageJSON = {}) {
+function detectPackageManager(packageJSON = {}, directory = ".") {
+  /** @param {string} path */
+  const lockfileExists = (path) => existsSync(resolve(directory, path));
+
   if (packageJSON.packageManager?.startsWith("npm")) {
     return "npm";
   }
@@ -1528,19 +1660,19 @@ function detectPackageManager(packageJSON = {}) {
     return /** @type {PackageManager} */ (devPackageManager);
   }
 
-  if (packageManagerLockfiles.pnpm.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.pnpm.some(lockfileExists)) {
     return "pnpm";
   }
 
-  if (packageManagerLockfiles.yarn.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.yarn.some(lockfileExists)) {
     return "yarn";
   }
 
-  if (packageManagerLockfiles.bun.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.bun.some(lockfileExists)) {
     return "bun";
   }
 
-  if (packageManagerLockfiles.npm.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.npm.some(lockfileExists)) {
     return "npm";
   }
 
@@ -1841,9 +1973,10 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
 
 /**
  * Whether the state shows that Calavera wrote the project's `quality` value
- * (#230): the state records that apply wrote exactly this value. Apply records
- * null when it writes no quality, such as when it keeps the project's own, so
- * a value it kept is never removed later. A state file without the record,
+ * (#230): the state records that apply wrote exactly this value. When apply
+ * writes no quality, it keeps a record that still equals the project's value
+ * and records null otherwise, such as when it keeps the project's own, so a
+ * value it kept is never removed later. A state file without the record,
  * from a release before #230 or rewritten by one, shows nothing: those
  * releases did not write quality when the recipe turned it off, and the state
  * does not record the recipe's script flags, so the value may be the
@@ -1851,57 +1984,32 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
  *
  * @param {CalaveraState} state
  * @param {unknown} quality the project's `quality` value
- * @returns {boolean}
+ * @returns {quality is string}
  */
 function stateShowsCalaveraWroteQuality(state, quality) {
   return typeof quality === "string" && state.qualityScript === quality;
 }
 
-function createHtmlValidateWrapper() {
-  return readBoundedTemplate(HTML_VALIDATE_WRAPPER_TEMPLATE, "HTML Validate wrapper");
-}
+/**
+ * The `quality` value the state records after apply (#230, #968): the value
+ * the plan writes, or else the project's value if the state already records
+ * that Calavera wrote exactly it. That happens only when the recipe does not
+ * request quality and so leaves the script alone, because when the plan omits
+ * a requested quality, apply has already removed a recorded value. Keeping
+ * the record lets a later apply that omits a requested quality still remove
+ * the value. Otherwise null, because apply wrote no quality.
+ *
+ * @param {Record<string, string>} scripts the scripts the plan writes
+ * @param {CalaveraState} previousState
+ * @param {unknown} quality the project's `quality` value after apply
+ * @returns {string | null}
+ */
+function qualityScriptRecord(scripts, previousState, quality) {
+  if (typeof scripts.quality === "string") {
+    return scripts.quality;
+  }
 
-function createEditorConfig() {
-  return renderEditorConfig(CALAVERA_EDITORCONFIG);
-}
-
-function createAgentBootstrapGuidanceBody() {
-  return `# Calavera Agent Guidance
-
-- Use Calavera when the user wants to inspect, compose, preview, apply, or update project tooling.
-- Verify the Calavera MCP tools are available before composing a recipe.
-- Prefer the Calavera MCP server over hand-authoring \`calavera.config.json\`.
-- If the Calavera MCP tools are not available, stop and help the user register the MCP server from \`${AGENT_BOOTSTRAP_MCP_FILE}\`, then reload the agent session if the MCP host requires it.
-- Do not inspect npm cache internals or import Calavera source files from a package cache as a substitute for MCP setup.
-- Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
-- If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use \`dry_run_apply\` to show concrete impact when adoption still looks possible.
-- Start with \`inspect_project\`, \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
-- Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
-- Always present \`dry_run_apply\` output to the user before changing files.
-- Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
-- If the MCP transport closes or reports \`-32000\` during or immediately after \`apply_recipe\`, treat the outcome as unknown instead of failed. Inspect \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package metadata before retrying the apply.
-- Treat files listed by \`dry_run_apply\` as Calavera-managed outputs. Do not hand-write or edit them; let \`apply_recipe\` or \`create-project-calavera apply\` create them after approval.
-- Use AskUserTool or the agent client's equivalent when available for profile choices, conflict decisions, and apply approval.
-
-MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
-`;
-}
-
-// A blank line separates each marker from the guidance, because Markdown formatters such as Oxfmt
-// add one between an HTML comment and the heading that follows it (#669).
-function createAgentBootstrapGuidance() {
-  return `${AGENT_BOOTSTRAP_MARKER}
-
-${createAgentBootstrapGuidanceBody()}`;
-}
-
-function createAgentBootstrapGuidanceSection() {
-  return `${AGENT_BOOTSTRAP_SECTION_START}
-
-${createAgentBootstrapGuidanceBody().trimEnd()}
-
-${AGENT_BOOTSTRAP_SECTION_END}
-`;
+  return stateShowsCalaveraWroteQuality(previousState, quality) ? quality : null;
 }
 
 /**
@@ -1940,6 +2048,27 @@ function createMcpLaunchCommand(packageManager) {
 }
 
 /**
+ * The MCP launch command for each supported package manager, in the order of
+ * `supportedPackageManagers`. `--init` checks an existing `calavera` entry against them, and
+ * `eject` reads them through `agentBootstrapTexts` (#1205).
+ *
+ * @returns {{ command: string, args: string[] }[]}
+ */
+function mcpLaunchCommands() {
+  return supportedPackageManagers.map(createMcpLaunchCommand);
+}
+
+/**
+ * What the MCP setup notes need to name each launch command, which this module owns.
+ *
+ * @type {import("./agent-guidance.js").McpLaunchCommands}
+ */
+const mcpSetupLaunchCommands = Object.freeze({
+  packageManagers: supportedPackageManagers,
+  launchCommandFor: createMcpLaunchCommand,
+});
+
+/**
  * The command `--new` spawns, per ADR-0010 Decision 1 and its amendments:
  * every runner starts Vite+'s `create-vite-plus` entry point.
  *
@@ -1951,7 +2080,7 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
   switch (packageManager) {
     case "pnpm":
     case "yarn":
-      // Not yarn create: under Yarn 1 it installs create-vite-plus globally (#740).
+      // dlx with the package name, not create, as #740 decided.
       return {
         command: packageManager,
         args: ["dlx", "create-vite-plus@latest", ...forwardedArgs],
@@ -1966,276 +2095,22 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
 }
 
 /**
- * @param {{ command: string, args: string[] }} launchCommand
- * @returns {string}
- */
-function formatShellCommand(launchCommand) {
-  return [launchCommand.command, ...launchCommand.args].map(quoteShellToken).join(" ");
-}
-
-function createMcpManualCommandReference() {
-  return supportedPackageManagers
-    .map((packageManager) => {
-      const commands = projectLocalCommandCatalog[packageManager];
-      return `- ${commands.label}: \`${formatShellCommand(createMcpLaunchCommand(packageManager))}\``;
-    })
-    .join("\n");
-}
-
-/**
- * @param {{ command: string, args: string[] }} launchCommand
- * @returns {string}
- */
-function createMcpServerConfigSnippet(launchCommand) {
-  return JSON.stringify(createMcpServersJsonConfig(launchCommand), null, 2);
-}
-
-/**
- * @param {PackageManager} packageManager
- * @returns {string}
- */
-function createAgentBootstrapMcpInstructions(packageManager) {
-  const commands = projectLocalCommandCatalog[packageManager];
-  const launchCommand = createMcpLaunchCommand(packageManager);
-  const mcpConfig = createMcpServerConfigSnippet(launchCommand);
-  const codexConfig = createCodexMcpTomlBlock(launchCommand).trimEnd();
-  const opencodeConfig = JSON.stringify(createOpenCodeMcpJsonConfig(launchCommand), null, 2);
-  const shellCommand = formatShellCommand(launchCommand);
-  const manualCommandReference = createMcpManualCommandReference();
-
-  return `# Calavera MCP Setup
-
-Calavera can configure MCP automatically during \`--init\` for one project-local
-agent harness. It never writes global/user MCP config. If you skipped
-auto-config or need to repair a setup manually, use the project-local target for
-your harness.
-
-This project's detected package manager is ${commands.label}; the launch command
-is:
-
-\`\`\`bash
-${shellCommand}
-\`\`\`
-
-## Project-local targets
-
-### Claude Code: \`.mcp.json\`
-
-\`\`\`json
-${mcpConfig}
-\`\`\`
-
-### Cursor: \`.cursor/mcp.json\`
-
-\`\`\`json
-${mcpConfig}
-\`\`\`
-
-### Codex: \`.codex/config.toml\`
-
-\`\`\`toml
-${codexConfig}
-\`\`\`
-
-### OpenCode: \`opencode.json\`
-
-\`\`\`json
-${opencodeConfig}
-\`\`\`
-
-Project-local MCP servers should be registered from the project root. Using the
-package manager declared by the project avoids package-manager preflight
-failures before Calavera can start, such as npm rejecting a Bun-managed project
-through \`devEngines.packageManager\`.
-
-When configuring an MCP server manually, choose the command that matches the
-project's package manager:
-
-${manualCommandReference}
-
-After registration, reload or restart the agent session if your MCP host does not
-discover new tools dynamically. Confirm the Calavera tools are visible before
-composing a recipe.
-
-Do not work around missing MCP tools by reading npm cache internals or importing
-Calavera source files from package cache paths. That bypasses the supported MCP
-setup and can use the wrong cached package version.
-
-## Command syntax for agents
-
-\`npm create\` uses \`--\` to forward flags to Calavera:
-
-\`\`\`bash
-npm create project-calavera -- --init
-npm create project-calavera apply -- --dry-run
-\`\`\`
-
-Do not use \`npm create project-calavera --init\`; npm treats \`--init\` as its own
-option and Calavera falls back to the recipe CLI.
-
-Direct binary launchers such as \`npx --package\` and MCP server registrations
-do not need an extra \`--\` before Calavera flags:
-
-\`\`\`bash
-npx --package create-project-calavera@${packageJson.version} create-project-calavera --help
-${shellCommand}
-\`\`\`
-
-## Bun temp and cache directories
-
-If a Bun-based MCP launch fails before Calavera starts with
-\`error: bun is unable to write files to tempdir: PermissionDenied\`, configure
-the MCP host to give that server a writable temp directory. Set \`TMPDIR\` to an
-absolute path that exists and is writable by the MCP host process, such as an
-absolute path to a project-local \`.calavera/tmp\` directory.
-
-If Bun can write temp files but cannot populate its package cache, also set
-\`BUN_INSTALL_CACHE_DIR\` to an absolute writable directory, such as an absolute
-path to \`.calavera/bun-install-cache\`. Keep these environment overrides on Bun
-MCP registrations only; they are recovery settings for restricted hosts, not
-part of the default Calavera MCP config.
-
-## Calavera MCP workflow
-
-Use the tools in this order when they are available:
-
-1. \`inspect_project\`
-2. \`list_profiles\`
-3. \`list_integrations\`
-4. \`describe_integration\`
-5. \`list_ai_artifacts\`
-6. \`compose_recipe\`
-7. \`validate_recipe\`
-8. \`explain_recipe\`
-9. \`dry_run_apply\`
-10. \`apply_recipe\`
-
-\`dry_run_apply\` is the review boundary. Show its inspection findings, omitted
-script explanations, ownership notes, and planned file changes to the user,
-including the command each \`package.json\` script in \`scriptChanges\` will run
-and, for a changed or renamed script, the command it replaces, then wait for
-explicit approval before calling \`apply_recipe\`.
-
-\`apply_recipe.writeConfig: false\` only skips writing \`calavera.config.json\`.
-Do not use it to bypass managed-file conflicts, stale state hashes, or an
-unapproved dry-run result.
-
-If the MCP transport closes or reports \`-32000\` during or immediately after
-\`apply_recipe\`, treat the apply outcome as unknown instead of failed. Inspect
-\`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
-metadata before retrying the apply.
-
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, and \`.stylelintrc.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
-
-If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
-
-https://calavera.schalkneethling.com
-
-Then run \`${commands.applyDryRun}\` and ask for approval before running \`${commands.applyRecipe}\`.
-
-Suggested first prompt:
-
-> ${AGENT_BOOTSTRAP_MCP_NOTES_PROMPT}
-`;
-}
-
-/**
- * @param {Integration[]} integrations
- * @param {Record<string, unknown>} [integrationOptions]
- * @returns {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }}
- */
-function createStylelintConfig(integrations, integrationOptions = {}) {
-  /** @type {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }} */
-  const config = {
-    extends: [],
-    ignoreFiles: [
-      "coverage/**",
-      "dist/**",
-      "**/dist/**",
-      "**/dist-types/**",
-      "dist-web/**",
-      "node_modules/**",
-      // Agent worktrees are full checkouts of other branches, so their files are not this project's.
-      ".claude/worktrees/**",
-    ],
-    plugins: [],
-    rules: {},
-  };
-
-  for (const integration of integrations) {
-    if (!integration.stylelint) {
-      continue;
-    }
-
-    config.extends.push(...(integration.stylelint.extends ?? []));
-    config.plugins.push(...(integration.stylelint.plugins ?? []));
-    config.rules = {
-      ...config.rules,
-      ...integration.stylelint.rules,
-    };
-  }
-
-  config.extends = unique(config.extends);
-  config.plugins = unique(config.plugins);
-
-  const baselineOptions = integrationOptions["stylelint-baseline"];
-  if (baselineOptions) {
-    config.rules["plugin/use-baseline"] = [true, baselineOptions];
-  }
-
-  return config;
-}
-
-/**
- * @param {Integration[]} integrations
- * @returns {{ extends: string[], rules: Record<string, unknown> }}
- */
-function createHtmlValidateConfig(integrations) {
-  return {
-    extends: unique(integrations.flatMap((integration) => integration.htmlValidate?.extends ?? [])),
-    rules: Object.assign(
-      {},
-      ...integrations.map((integration) => integration.htmlValidate?.rules ?? {}),
-    ),
-  };
-}
-
-function createReactDoctorConfig() {
-  return {
-    offline: true,
-  };
-}
-
-function createKnipConfig() {
-  return {
-    $schema: "https://unpkg.com/knip@6/schema.json",
-    ignore: [".agents/**"],
-    ignoreExportsUsedInFile: true,
-  };
-}
-
-/**
- * The managed `stryker.config.json` (#734), verified with Stryker 10.1.1 in a `vp create` library
- * under pnpm, npm, Yarn 4, and Bun with the Vitest runner, and with the tap runner on node:test
- * tests (#736). The config names the runner the recipe selects, because Stryker's default command
- * runner reports a timeout for every mutant of a slow suite and counts those as detected
- * (ADR-0014), and lists it in `plugins`, because pnpm's strict `node_modules` layout hides it from
- * Stryker's default plugin lookup. The tap runner also gets the test files and node arguments.
+ * The message that stops a run Yarn 1 started (ADR-0023, Decision 1): one command for each
+ * supported package manager, each of which runs as printed. The CLI's commands are the short
+ * runner forms; npm's is `npx --package`, because `npm create` needs a `--` before flags. The MCP
+ * server's are the forms an MCP host's configuration needs, because its bin is not the package's
+ * name.
  *
- * @param {import("./stryker-options.js").SelectedTestRunner} runner
+ * @param {string} bin `create-project-calavera` or `create-project-calavera-mcp`.
+ * @param {string} version
  */
-function createStrykerConfig(runner) {
-  return {
-    $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-    testRunner: runner.strykerTestRunner,
-    plugins: runner.dependencies,
-    ...(runner.strykerTestRunner === "tap"
-      ? { tap: { testFiles: runner.testFiles, nodeArgs: STRYKER_TAP_NODE_ARGS } }
-      : {}),
-    // WORKAROUND(@stryker-mutator/core): tsconfig preprocessing calls the TypeScript JS API, which TypeScript 7 removed, and vp create projects use TypeScript 7; a missing file skips it | upstream: https://github.com/stryker-mutator/stryker-js/issues/6111
-    tsconfigFile: STRYKER_SKIPPED_TSCONFIG,
-    reporters: ["clear-text", "html"],
-  };
+export function unsupportedYarnMessage(bin, version) {
+  /** @param {PackageManager} packageManager */
+  const command = (packageManager) =>
+    bin === packageJson.name && packageManager !== "npm"
+      ? projectLocalCommandCatalog[packageManager].runCalavera
+      : formatShellCommand(createPackageRunnerCommand(packageManager, packageJson.name, bin));
+  return `${bin} does not support Yarn ${version}. Use Yarn 2 or later (${command("yarn")}), npm (${command("npm")}), pnpm (${command("pnpm")}), or Bun (${command("bun")}).`;
 }
 
 /**
@@ -2267,10 +2142,10 @@ function mergeVarlockGitignore(existing) {
 async function planVarlockProjectFiles(existingGitignore) {
   const plans = [];
 
-  if (!(await fileExists(".env.schema"))) {
+  if (!(await fileExists(VARLOCK_SCHEMA_PATH))) {
     plans.push({
       type: /** @type {const} */ ("write"),
-      path: ".env.schema",
+      path: VARLOCK_SCHEMA_PATH,
       action: /** @type {const} */ ("scaffold"),
       contents: VARLOCK_SCHEMA,
     });
@@ -2349,29 +2224,19 @@ async function assertSafeManagedFileWrite(path, contents, previousState, reownMa
   }
 
   const installedContents = await readFile(path, "utf8");
-  const targetHash = textHash(contents);
-  const installedHash = textHash(installedContents);
-
-  if (installedHash === targetHash) {
-    return;
-  }
-
   const stateFile = managedFileStateForPath(previousState, path);
+  const difference = managedFileDifference(path, installedContents, contents, stateFile);
 
-  if (stateFile?.hash === installedHash) {
+  if (difference === "accepted") {
     return;
   }
 
-  if (jsonContentsMatch(path, installedContents, contents)) {
-    return;
-  }
-
-  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(path))) {
+  if (difference === "edited" && reownManagedFiles.has(normalizeManagedFilePath(path))) {
     return;
   }
 
   const reason = stateFile
-    ? `It appears to have local edits (installed=${installedHash}, state=${stateFile.hash}).`
+    ? `It appears to have local edits (installed=${textHash(installedContents)}, state=${stateFile.hash}).`
     : "It is not recorded as Calavera-managed.";
 
   throw new Error(`Refusing to overwrite existing managed file: ${path}. ${reason}`);
@@ -2416,47 +2281,6 @@ async function assertSafeManagedFileWrites(filePlans, previousState, reownManage
 }
 
 /**
- * @param {unknown} value
- * @returns {unknown}
- */
-function sortJsonValue(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortJsonValue);
-  }
-
-  if (isPlainObject(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, sortJsonValue(item)]),
-    );
-  }
-
-  return value;
-}
-
-/**
- * @param {string} path
- * @param {string} installedContents
- * @param {string} targetContents
- * @returns {boolean}
- */
-function jsonContentsMatch(path, installedContents, targetContents) {
-  if (!path.endsWith(".json")) {
-    return false;
-  }
-
-  try {
-    return (
-      JSON.stringify(sortJsonValue(JSON.parse(installedContents))) ===
-      JSON.stringify(sortJsonValue(JSON.parse(targetContents)))
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
  * @param {string} path
  * @param {string} contents
  * @param {boolean} dryRun
@@ -2485,98 +2309,6 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
   }
 
   await writeFile(path, contents);
-}
-
-/**
- * The text of each integration's managed files, by path. Which files exist, and the order apply
- * writes them in, come from `managedFileDeclarations` in project-inspection.js (#458).
- *
- * @type {Record<string, (integration: Integration, integrations: Integration[], integrationOptions: Record<string, unknown>) => Record<string, string>>}
- */
-const managedFileContents = {
-  editorconfig: () => ({ ".editorconfig": createEditorConfig() }),
-  stylelint: (_integration, integrations, integrationOptions) => ({
-    ".stylelintrc.json": `${JSON.stringify(createStylelintConfig(integrations, integrationOptions), null, 2)}\n`,
-  }),
-  "html-validate": (_integration, integrations) => ({
-    ".htmlvalidate.json": `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
-    [HTML_VALIDATE_IGNORE_PATH]: htmlValidateIgnoreText(integrations),
-    [HTML_VALIDATE_WRAPPER_PATH]: createHtmlValidateWrapper(),
-  }),
-  "react-doctor": () => ({
-    "react-doctor.config.json": `${JSON.stringify(createReactDoctorConfig(), null, 2)}\n`,
-  }),
-  knip: () => ({ "knip.json": `${JSON.stringify(createKnipConfig(), null, 2)}\n` }),
-  stryker: (stryker, _integrations, integrationOptions) => {
-    const runner = /** @type {import("./stryker-options.js").SelectedTestRunner} */ (
-      selectedTestRunner(stryker, integrationOptions)
-    );
-    return {
-      [STRYKER_CONFIG_PATH]: `${JSON.stringify(createStrykerConfig(runner), null, 2)}\n`,
-    };
-  },
-  [GITHUB_REPOSITORY_CONTROLS_ID]: (_integration, integrations, integrationOptions) =>
-    Object.fromEntries(
-      githubRepositoryControlManagedFiles(
-        integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
-        integrations,
-      ).map(({ path, contents }) => [path, contents]),
-    ),
-};
-
-/**
- * @param {Integration[]} integrations
- * @param {Record<string, unknown>} [integrationOptions]
- * @returns {{ path: string, contents: string }[]}
- */
-function plannedManagedFiles(integrations, integrationOptions = {}) {
-  return managedFileDeclarations.flatMap(({ integration: id, files }) => {
-    const integration = integrations.find((selected) => selected.id === id);
-    if (!integration) {
-      return [];
-    }
-
-    const createContents = managedFileContents[id];
-    if (!createContents) {
-      throw new Error(`Calavera declares managed files for ${id} but has no contents for them.`);
-    }
-
-    const contentsByPath = createContents(integration, integrations, integrationOptions);
-    // A file with contents but no declaration would never be written, so it stops the plan.
-    const undeclared = Object.keys(contentsByPath).filter(
-      (path) => !files.some((file) => file.path === path),
-    );
-    if (undeclared.length > 0) {
-      throw new Error(
-        `Calavera has contents for ${undeclared.join(", ")} but does not declare them for ${id}.`,
-      );
-    }
-
-    return files.map(({ path }) => {
-      const contents = contentsByPath[path];
-      if (contents === undefined) {
-        throw new Error(`Calavera declares ${path} for ${id} but has no contents for it.`);
-      }
-      return { path, contents };
-    });
-  });
-}
-
-/**
- * The managed files with the text apply writes: each JSON and Markdown file formatted by the
- * project's formatter (#669).
- *
- * @param {{ path: string, contents: string }[]} plans
- * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
- * @returns {Promise<{ path: string, contents: string }[]>}
- */
-async function formatManagedFilePlans(plans, loadFormatter) {
-  return Promise.all(
-    plans.map(async (plan) => ({
-      ...plan,
-      contents: await formatGeneratedText(plan.path, plan.contents, loadFormatter),
-    })),
-  );
 }
 
 /**
@@ -2612,30 +2344,25 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
     return undefined;
   }
 
-  const targetHash = textHash(filePlan.contents);
   const installedContents = await readFile(filePlan.path, "utf8");
-  const installedHash = textHash(installedContents);
-
-  if (installedHash === targetHash) {
-    return undefined;
-  }
-
   const stateFile = managedFileStateForPath(previousState, filePlan.path);
+  const difference = managedFileDifference(
+    filePlan.path,
+    installedContents,
+    filePlan.contents,
+    stateFile,
+  );
 
-  if (stateFile?.hash === installedHash) {
+  if (difference === "accepted") {
     return undefined;
   }
 
-  if (jsonContentsMatch(filePlan.path, installedContents, filePlan.contents)) {
-    return undefined;
-  }
-
-  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
+  if (difference === "edited" && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
     return {
       severity: "warning",
       kind: "managed-file-reown",
       path: filePlan.path,
-      message: `${filePlan.path} has local edits relative to Calavera state; this run will treat the current contents as an approved managed-file baseline before applying the recipe.`,
+      message: `${filePlan.path} has local edits relative to Calavera state; apply will replace its current contents with Calavera's, so the edits are lost unless you save a copy first.`,
     };
   }
 
@@ -2799,7 +2526,7 @@ export async function inspectProject(recipe, options = {}) {
   let manifestFinding;
 
   // Inspection is read-only, so a broken manifest becomes a finding. Apply
-  // still stops on it. The cause stays in the message for diagnosis.
+  // still stops on it. What is wrong, and where, stays in the message for diagnosis.
   try {
     packageJSON = await readPackageJSONIfPresent();
 
@@ -2809,11 +2536,12 @@ export async function inspectProject(recipe, options = {}) {
       packageJSON = {};
     }
   } catch (error) {
-    if (!(error instanceof SyntaxError)) {
+    if (!(error instanceof JSONParseError)) {
       throw error;
     }
 
-    manifestFinding = invalidManifestFinding(`could not be parsed: ${error.message}`);
+    // #1157: the problem and its position, never JSON.parse's message, which quotes the file.
+    manifestFinding = invalidManifestFinding(`could not be parsed: ${error.problem}`);
   }
 
   const previousState = await readStateIfPresent();
@@ -3016,10 +2744,13 @@ export async function inspectProject(recipe, options = {}) {
 export async function applyRecipe(options) {
   const configPath = resolve(options.config);
 
-  if (options.command === "apply" && !(await isInWorkingDirectory(configPath))) {
-    const recipeCopy = await planRecipeCopy(configPath);
+  if (
+    (options.command === "apply" || options.command === "update") &&
+    !(await isInWorkingDirectory(configPath))
+  ) {
+    const recipeCopy = await planRecipeCopy(configPath, options.command);
     return applyRecipeObject(
-      recipeFromJSON(JSON.parse(recipeCopy.bytes.toString("utf8")), configPath),
+      recipeFromJSON(parseJSON(recipeCopy.bytes.toString("utf8"), configPath), configPath),
       {
         ...options,
         config: CONFIG_FILE,
@@ -3047,32 +2778,29 @@ async function isInWorkingDirectory(path) {
   } catch {
     // A directory that does not exist is compared as given; reading the recipe reports it.
   }
-  const fromWorkingDirectory = relative(
-    await realpath(process.cwd()),
-    join(directory, basename(path)),
-  );
-  // A file is never the parent directory itself, so a path outside starts with `..` and a
-  // separator, or stays absolute when it is on another Windows drive.
-  return !fromWorkingDirectory.startsWith(`..${sep}`) && !isAbsolute(fromWorkingDirectory);
+  return isPathInside(await realpath(process.cwd()), join(directory, basename(path)));
 }
 
 /**
  * #603 and the owner decision of 2026-11-14: `apply --config <path>` with a recipe outside the
- * project copies it, byte for byte, into the project root as calavera.config.json. The project
- * root is the working directory, and it must contain a package.json; apply does not offer to
- * create one there, because a missing package.json more likely means the wrong directory. A
- * different calavera.config.json already in the project is a hard stop, because apply never
- * replaces a local recipe. Both checks run before anything is planned, in the dry run as well.
+ * project copies it, byte for byte, into the project root as calavera.config.json. `update`
+ * applies the recipe as apply does, so it copies by the same rule (#1025), and `command` names
+ * the command the person ran in each refusal. The project root is the working directory, and it
+ * must contain a package.json; neither command offers to create one there, because a missing
+ * package.json more likely means the wrong directory. A different calavera.config.json already in
+ * the project is a hard stop, because neither command replaces a local recipe. Both checks run
+ * before anything is planned, in the dry run as well.
  *
  * @param {string} source Absolute recipe path.
+ * @param {"apply" | "update"} command
  * @returns {Promise<RecipeCopy>}
  */
-async function planRecipeCopy(source) {
+async function planRecipeCopy(source, command) {
   const directory = process.cwd();
 
   if (!(await fileExists(join(directory, "package.json")))) {
     throw new Error(
-      `apply refused: ${directory} has no package.json, so it is not a project root. apply --config copies a recipe from outside the project into the project root, which is the current directory and must contain a package.json. Change to the project folder that contains package.json, then run apply again. Calavera stopped before writing anything.`,
+      `${command} refused: ${directory} has no package.json, so it is not a project root. ${command} --config copies a recipe from outside the project into the project root, which is the current directory and must contain a package.json. Change to the project folder that contains package.json, then run ${command} again. Calavera stopped before writing anything.`,
     );
   }
 
@@ -3085,7 +2813,7 @@ async function planRecipeCopy(source) {
 
   if (targetStats !== undefined && !targetStats.isFile()) {
     throw new Error(
-      `apply refused: ${target} is ${targetStats.isSymbolicLink() ? "a symbolic link" : "a directory or other entry"}, not a regular file, so apply cannot copy ${source} there without writing somewhere else. Replace it with the recipe file itself, or remove it, then run apply again. Calavera stopped before writing anything.`,
+      `${command} refused: ${target} is ${targetStats.isSymbolicLink() ? "a symbolic link" : "a directory or other entry"}, not a regular file, so ${command} cannot copy ${source} there without writing somewhere else. Replace it with the recipe file itself, or remove it, then run ${command} again. Calavera stopped before writing anything.`,
     );
   }
 
@@ -3093,7 +2821,7 @@ async function planRecipeCopy(source) {
 
   if (existing !== undefined && !existing.equals(bytes)) {
     throw new Error(
-      `apply refused: ${target} already exists and differs from ${source}, given with --config, and apply never replaces a project's recipe. To apply ${source}, replace ${target} with it yourself, then run apply without --config. To keep the project's recipe, run apply without --config. Calavera stopped before writing anything.`,
+      `${command} refused: ${target} already exists and differs from ${source}, given with --config, and ${command} never replaces a project's recipe. To apply ${source}, replace ${target} with it yourself, then run ${command} without --config. To keep the project's recipe, run ${command} without --config. Calavera stopped before writing anything.`,
     );
   }
 
@@ -3159,14 +2887,41 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
     // Another project's recipe or state is a hard stop, not something to replace. The ancestor's
     // default recipe counts even when the recipe path given here is a custom one, because apply
     // would otherwise record state for this recipe next to it. Because the ancestor has no state,
-    // no managed file there can be reowned, so reownManagedFiles needs no translation.
-    for (const existing of new Set([
-      config,
-      join(ancestorDirectory, CONFIG_FILE),
-      join(ancestorDirectory, STATE_FILE),
+    // no managed file there can be reowned, so reownManagedFiles needs no translation. The recipe
+    // paths come first, so a directory with both a recipe and state names its recipe (#1038). A
+    // path listed twice is checked twice, which is harmless because the first hit stops.
+    const ancestorRecipe = join(ancestorDirectory, CONFIG_FILE);
+    for (const [existing, kind] of /** @type {const} */ ([
+      [config, "recipe"],
+      [ancestorRecipe, "recipe"],
+      [join(ancestorDirectory, STATE_FILE), "state"],
     ])) {
       if (await fileExists(existing)) {
-        throw ancestorAlreadyManagedError(chosen, existing);
+        // A given recipe path still stops apply wherever it points, because apply would replace
+        // the file. When the file, with every link resolved, is outside the ancestor's directory,
+        // it is named as such rather than as the ancestor's recipe (#1142). The ancestor's own
+        // calavera.config.json, by any path that resolves to it, is the recipe Calavera reads there,
+        // so it keeps that message.
+        if (existing === config) {
+          let outside;
+          try {
+            const real = await realpath(existing);
+            const ancestorRecipeReal = await realpath(ancestorRecipe).catch(() => undefined);
+            if (
+              real !== ancestorRecipeReal &&
+              !isPathInside(await realpath(ancestorDirectory), real)
+            ) {
+              const isLink = (await lstat(existing)).isSymbolicLink();
+              outside = recipePathOutsideAncestorError(chosen, existing, real, isLink);
+            }
+          } catch {
+            // The path changed after it was found, so the plain refusal below still stops apply.
+          }
+          if (outside) {
+            throw outside;
+          }
+        }
+        throw ancestorAlreadyManagedError(chosen, existing, kind);
       }
     }
 
@@ -3184,6 +2939,36 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
   }
 
   return { decision: chosen };
+}
+
+/**
+ * Each artifact apply locks, with `filesAlreadyMatch`: true when apply writes none of its outputs,
+ * because the files in the project already match the payload it locks (#749, #1021). The apply
+ * summary reads the field for its headline, so the two agree. The lock is not affected, because
+ * the install builds each lock entry field by field and takes only the version and tag of an
+ * approved entry.
+ *
+ * @param {ArtifactLockEntry[]} installed
+ * @param {Recipe} recipe
+ * @param {Change[]} changes
+ * @returns {AutoInstalledArtifact[]}
+ */
+function withMatchingFiles(installed, recipe, changes) {
+  const writtenPaths = new Set(
+    changes
+      .filter(({ category, type }) => category === "ai" && type === "write")
+      .map(({ path }) => path),
+  );
+  const outputsById = new Map(
+    resolveAiArtifacts(recipe).map((artifact) => [artifact.id, aiArtifactOutputPaths(artifact)]),
+  );
+  return installed.map((entry) => {
+    const outputs = outputsById.get(entry.id);
+    if (outputs === undefined) {
+      throw new Error(`No recipe selection for the artifact apply locks: ${entry.id}.`);
+    }
+    return { ...entry, filesAlreadyMatch: !outputs.some((path) => writtenPaths.has(path)) };
+  });
 }
 
 /**
@@ -3221,6 +3006,8 @@ async function manifestDecisionResult(recipe, applyOptions, decision) {
     wiringChanges: [],
     wiringWarnings: [],
     ignoreChanges: [],
+    stagingLeftovers: [],
+    temporaryFolderLeftovers: [],
     recipe,
     manifestDecision: decision,
   };
@@ -3233,11 +3020,33 @@ async function manifestDecisionResult(recipe, applyOptions, decision) {
  * @returns {Promise<ApplyResult>}
  */
 export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  // #1033: the temporary folders apply could not remove once it no longer needed them. Apply goes
+  // on after such a failure, so a later step that fails names them with its own error.
+  /** @type {unknown[]} */
+  const leftoverFailures = [];
+  try {
+    return await planAndApplyRecipe(recipeInput, options, artifactServices, leftoverFailures);
+  } catch (error) {
+    throw errorWithLeftovers(error, leftoverFailures);
+  }
+}
+
+/**
+ * @param {Recipe} recipeInput
+ * @param {Partial<CliOptions>} options
+ * @param {ArtifactServices} artifactServices
+ * @param {unknown[]} leftoverFailures Receives each failure to remove a temporary folder after the
+ *   last planning step.
+ * @returns {Promise<ApplyResult>}
+ */
+async function planAndApplyRecipe(recipeInput, options, artifactServices, leftoverFailures) {
   // Read before validation, which drops a recorded default runner from the recipe (#890).
   const recordedStrykerOptions = recipeInput?.integrationOptions?.[STRYKER_ID];
   const recordsTestRunner =
     isPlainObject(recordedStrykerOptions) && Object.hasOwn(recordedStrykerOptions, "testRunner");
   validateRecipe(recipeInput);
+  // #1125: before the manifest choice and every other step, so nothing is written or asked first.
+  assertNoLegacyEntryNeedsWiring(recipeInput.ai);
 
   const applyOptions = {
     dryRun: false,
@@ -3362,8 +3171,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     detectedPackageJSON,
     packageManager,
   );
+  // Planned under --no-install too, so the summary can give the command to run later (#1022).
   const installPlan =
-    dependencyList.length > 0 && !(applyOptions.noInstall && !applyOptions.dryRun)
+    dependencyList.length > 0
       ? await planDevDependencyInstall(
           packageManager,
           vitePlusDetection,
@@ -3373,8 +3183,12 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         )
       : undefined;
 
-  if (installPlan?.problem && !applyOptions.dryRun) {
-    throw installPlan.problem;
+  // A real apply skips the install under --no-install, so it neither runs nor reports the plan.
+  const skipsInstall = applyOptions.noInstall && !applyOptions.dryRun;
+  const runPlan = skipsInstall ? undefined : installPlan;
+
+  if (runPlan?.problem && !applyOptions.dryRun) {
+    throw runPlan.problem;
   }
 
   // #669 and ADR-0015, Decision 5: the text of every file Calavera generates comes from the
@@ -3382,11 +3196,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // and the project's own vp check accepts them. The formatter loads only when a file needs it.
   // When apply also writes Calavera's .editorconfig, formatting stops if that file would change the
   // settings the formatter uses, because the formatter can only read the settings on disk.
-  const loadFormatter = projectFormatterLoader(process.cwd(), vitePlusDetection.status, {
-    editorConfig: integrations.some(({ id }) => id === "editorconfig")
-      ? CALAVERA_EDITORCONFIG
-      : undefined,
-  });
+  // Under create-here the formatter follows the parent's verdict, as the install and the quality
+  // script do (#961), so the parent's vp check accepts the files apply writes.
+  const loadFormatter = managedFileFormatterLoader(process.cwd(), vitePlusDetection, integrations);
   const managedFilePlans = await formatManagedFilePlans(
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,
@@ -3394,9 +3206,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // #838: the state apply writes last is formatted too, so a project whose formatter cannot load
   // stops here, with nothing written, even when no other file needs the formatter.
   await loadFormatter();
-  // ADR-0016: the integrations' .gitignore blocks, and the block that keeps the artifact cache out
-  // of Git (#841), are planned before anything is written, so an edited block stops the dry run
-  // and apply alike. The person's lines are never rewritten.
+  // ADR-0016: the integrations' .gitignore blocks, the block that keeps the artifact cache out
+  // of Git (#841), and the removal of the `ejected` block are planned before anything is
+  // written, so an edited block stops the dry run and apply alike. The person's lines are never rewritten.
   const gitignorePlan = planGitignoreBlocks({
     contents: (await fileExists(GITIGNORE_PATH))
       ? await readFile(GITIGNORE_PATH, "utf8")
@@ -3406,6 +3218,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ...(await artifactCacheIgnoreLines(recipe)),
     ],
     records: previousState.gitignoreBlocks,
+    // ADR-0017, Amendment 5: a project apply writes into is managed again, so the block `eject`
+    // left goes, and an edited one stops apply here, before anything is written.
+    remove: [{ integration: EJECTED_BLOCK, lines: EJECTED_LINES }],
   });
   const ignoreChanges = [
     ...gitignorePlan.changes,
@@ -3423,7 +3238,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const answered =
     testRunnerAnswered ||
     [...artifactInputs, ...integrationInputs].some(({ source }) => source === "prompt");
-  const configPath = resolve(applyOptions.config ?? "calavera.config.json");
+  const configPath = resolve(applyOptions.config ?? CONFIG_FILE);
   const configText =
     applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)
       ? await formatGeneratedText(
@@ -3432,7 +3247,34 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
           loadFormatter,
         )
       : undefined;
+  const configUnchanged =
+    configText !== undefined &&
+    previouslyApplied &&
+    (await fileExists(configPath)) &&
+    (await readFile(configPath, "utf8")) === configText;
+  // #1208: a link at the recipe path, or a missing folder, stops apply here, in the dry run as
+  // well, before package.json or anything else is written.
+  if (configText !== undefined && !configUnchanged) {
+    await assertRecipeWriteTarget(configPath, process.cwd());
+  }
 
+  // #1085: the package manager's init command writes package.json in its own key order, so a
+  // package.json apply creates is written through the formatter as well, and so is one an earlier
+  // apply created and did not finish, while the file still has the text that apply wrote, which
+  // the state records as a hash. A package.json the person had, or put in place, keeps its key
+  // order, because the dry run does not show that file's text.
+  const createsPackageJSON = !(await fileExists("package.json"));
+  // The bytes of package.json on disk once this run's init and first format are done, so the dry
+  // run reports the file as unchanged only when apply writes nothing.
+  /** @type {string | undefined} */
+  let packageJSONTextOnDisk = createsPackageJSON
+    ? undefined
+    : await readFile("package.json", "utf8");
+  const formatsPackageJSON =
+    createsPackageJSON ||
+    (previousState.createdPackageJSON !== undefined &&
+      textHash(/** @type {string} */ (packageJSONTextOnDisk)) ===
+        previousState.createdPackageJSON.hash);
   const packageJSON = await ensurePackageJSON(
     packageManager,
     applyOptions.dryRun,
@@ -3440,6 +3282,25 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     applyOptions.assumeYes || manifestOutcome.decision?.choice === "create-here",
     applyOptions.json,
   );
+  // A check later in this run can stop apply, and the next run then finds a package.json that
+  // already exists. So the state records the text init wrote as soon as init has written it, which
+  // covers a format that fails, and then the formatted text.
+  if (createsPackageJSON && !applyOptions.dryRun) {
+    await mkdir(".calavera", { recursive: true });
+    await recordCreatedPackageJSON(
+      previousState,
+      await readFile("package.json", "utf8"),
+      loadFormatter,
+    );
+    const formatted = await formatGeneratedText(
+      "package.json",
+      `${JSON.stringify(packageJSON)}\n`,
+      loadFormatter,
+    );
+    await writeFile("package.json", formatted);
+    await recordCreatedPackageJSON(previousState, formatted, loadFormatter);
+    packageJSONTextOnDisk = formatted;
+  }
   const projectInspection = await inspectProject(recipe, {
     reownManagedFiles: applyOptions.reownManagedFiles,
     managedFilePlans,
@@ -3479,8 +3340,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       recipe,
       artifacts: resolveAiArtifacts(recipe, sources)
         .filter(({ type }) => type === "skill")
-        .map(({ source, index, path, sourcePath }) => ({
-          id: source,
+        .map(({ id, index, path, sourcePath }) => ({
+          id,
           index,
           skillDirectory: path,
           payloadDirectory: sourcePath,
@@ -3516,91 +3377,26 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   ).catch(async (error) => {
     throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   });
+  // #1034: an old `.calavera/.staging/<id>` folder is removed only when it matches the package the
+  // lock records; every other entry there is reported. Planned in the dry run too, so the dry run
+  // lists what apply removes. In a real run, prepareArtifactSources above has already committed
+  // the auto-install and written its entries to the lock, which the dry run has not, so the plan
+  // leaves out the ids the run installs: both decide against the lock as it was before the run.
+  // Planned before apply writes any project file or artifact output, and it never throws: a
+  // folder it cannot read is reported and kept.
+  const stagingPlan = await planStagingLeftovers({
+    dryRun: applyOptions.dryRun,
+    services: artifactServices,
+    installedIds: new Set(artifactPlan.installed.map(({ id }) => id)),
+  });
+  let stagingLeftovers = stagingPlan.items;
   // #838: the state is formatted after the last planning step and before apply writes any project
-  // file or artifact output. One write comes earlier: the auto-install transaction, which formats
-  // and commits its own records atomically. The state is formatted in the dry run as well, so the
+  // file or artifact output. Two writes come earlier: the auto-install transaction, which formats
+  // and commits its own records atomically, and, when init has just created package.json, the
+  // state record of that file (#1085). The state is formatted in the dry run as well, so the
   // dry run stops where apply would and a formatter that fails leaves the project unchanged. A
   // managed file's record is its path and the hash of the text apply writes, as writeManagedFile
   // writes it below. The quality script is final here, because no script rename targets it.
-  let stateText;
-  try {
-    stateText = await formatStateText(
-      mergeRecipeIntoState(
-        previousState,
-        recipe.profile,
-        integrations.map((integration) => integration.id),
-        managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
-        aiResult.artifacts,
-        wiringPlan.records,
-        gitignorePlan.records,
-        typeof scripts.quality === "string" ? scripts.quality : null,
-      ),
-      loadFormatter,
-    );
-    if (!applyOptions.dryRun) {
-      // #988: a locked package that is missing from .calavera/packages/ was rebuilt outside the
-      // project during planning, and is copied into place only now, after the last planning step,
-      // as the first write apply makes after the auto-install.
-      await artifactPlan.restore();
-      await buildAiApplyResult(recipe, applyOptions, previousState, artifactPlan.sources);
-    }
-  } catch (error) {
-    // #988: a failed cleanup is reported with the failure that stopped apply, not in its place.
-    throw await errorAfterCleanups(error, [artifactPlan.dispose]);
-  }
-  await artifactPlan.dispose();
-  // A dry run plans the auto-installed outputs in both results; apply writes them during the
-  // install, so only the install reports them.
-  const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
-  const aiChanges = [
-    ...artifactPlan.changes,
-    ...aiResult.changes.filter(({ path }) => !autoInstalledPaths.has(path)),
-    ...wiringPlan.files.map(({ path, type }) => ({
-      type,
-      path,
-      action: type === "write" ? /** @type {const} */ ("write") : /** @type {const} */ ("update"),
-      ownership: /** @type {const} */ ("project"),
-    })),
-  ];
-  const wiringWarnings = await artifactWiringWarnings({
-    recipe,
-    vitePlusStatus: vitePlusDetection.status,
-  });
-
-  // #603: a value the person typed is recorded in the project's recipe, so configText, when set,
-  // is written instead of the copied bytes, and the change is a write, not a copy.
-  if (configText === undefined && applyOptions.recipeCopy !== undefined) {
-    const { source, bytes, unchanged } = applyOptions.recipeCopy;
-    changes.push({
-      type: unchanged ? "unchanged" : "write",
-      path: CONFIG_FILE,
-      action: "write",
-      ownership: "project",
-      from: source,
-    });
-    if (!applyOptions.dryRun && !unchanged) {
-      // planRecipeCopy found no file here, so an exclusive create fails, instead of following it,
-      // if a file or link appeared since.
-      await writeFile(CONFIG_FILE, bytes, { flag: "wx" });
-    }
-  }
-
-  if (configText !== undefined) {
-    const configUnchanged =
-      previouslyApplied &&
-      (await fileExists(configPath)) &&
-      (await readFile(configPath, "utf8")) === configText;
-    changes.push({
-      type: configUnchanged ? "unchanged" : "write",
-      path: relative(process.cwd(), configPath),
-      action: "write",
-      ownership: "project",
-    });
-    if (!applyOptions.dryRun && !configUnchanged) {
-      await writeFile(configPath, configText);
-    }
-  }
-
   // ADR-0013, Decision 6: only after an earlier apply is a script under its
   // old name Calavera's to rename. A rename that would overwrite the user's
   // script under the new name does not happen, and that script is not written.
@@ -3656,8 +3452,144 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ...packageJSON.scripts,
     ...scripts,
   };
+  /** @type {CalaveraState} */
+  let nextState;
+  let stateText;
+  /** @type {string} */
+  let finalStateText;
+  /** @type {string | undefined} */
+  let createdPackageJSONText;
+  // C8: what the dry run says about formatting an existing package.json, when apply changes more
+  // than its scripts (#1085).
+  /** @type {string | undefined} */
+  let packageJSONFormatting;
+  /** @type {string | undefined} */
+  let formattedPackageJSONText;
+  try {
+    // #1085: formatted again with the scripts apply adds, because an init that writes no scripts
+    // key leaves apply to add it last, where Oxfmt would not keep it. Formatted with the state,
+    // before apply writes anything below, and inside this block, so a format that fails still
+    // disposes of the artifact sources.
+    // The dry run formats an existing package.json too, so the approval boundary can say what
+    // apply changes. A dry run of create-here has no package.json text to format yet.
+    formattedPackageJSONText =
+      formatsPackageJSON && !(applyOptions.dryRun && createsPackageJSON)
+        ? await formatGeneratedText(
+            "package.json",
+            `${JSON.stringify(packageJSON)}\n`,
+            loadFormatter,
+          )
+        : undefined;
+    createdPackageJSONText = applyOptions.dryRun ? undefined : formattedPackageJSONText;
+    packageJSONFormatting =
+      formattedPackageJSONText === undefined || createsPackageJSON
+        ? undefined
+        : await describePackageJSONFormatting(
+            packageJSON,
+            formattedPackageJSONText,
+            /** @type {string} */ (packageJSONTextOnDisk),
+            packageJSONUnchanged,
+            applyOptions.dryRun,
+            loadFormatter,
+          );
+    nextState = mergeRecipeIntoState(
+      previousState,
+      recipe.profile,
+      integrations.map((integration) => integration.id),
+      managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
+      aiResult.artifacts,
+      wiringPlan.records,
+      gitignorePlan.records,
+      qualityScriptRecord(scripts, previousState, packageJSON.scripts?.quality),
+    );
+    stateText = await formatStateText(withCreatedPackageJSON(nextState, undefined), loadFormatter);
+    // #1085: the install that follows can change package.json, so the record that Calavera
+    // created it stays, with the hash of the text apply writes, until the install has finished
+    // and apply has formatted the file again. An apply that skips the install keeps it for the
+    // apply that runs the install. Any other apply drops it, including one that finds a
+    // package.json whose text is no longer Calavera's.
+    finalStateText =
+      createdPackageJSONText !== undefined && installPlan?.spawn !== undefined
+        ? await formatStateText(
+            withCreatedPackageJSON(nextState, createdPackageJSONText),
+            loadFormatter,
+          )
+        : stateText;
+    if (!applyOptions.dryRun) {
+      // #988: a locked package that is missing from .calavera/packages/ was rebuilt outside the
+      // project during planning, and is copied into place only now, after the last planning step,
+      // as the first write apply makes after the auto-install.
+      await artifactPlan.restore();
+      await buildAiApplyResult(recipe, applyOptions, previousState, artifactPlan.sources);
+    }
+  } catch (error) {
+    // #988: a failed cleanup is reported with the failure that stopped apply, not in its place.
+    throw await errorAfterCleanups(error, [artifactPlan.dispose]);
+  }
+  // #1033 (owner decision of 2026-11-18): the AI outputs may already be written here, so a temporary
+  // folder apply cannot remove is reported, not an error, and apply goes on to write the config,
+  // the scripts, and the state.
+  leftoverFailures.push(...(await cleanupFailures([artifactPlan.dispose])));
+  const leftoverFolders = temporaryFolderLeftovers(leftoverFailures);
+  // A dry run plans the auto-installed outputs in both results; apply writes them during the
+  // install, so only the install reports them.
+  const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
+  const aiChanges = [
+    ...artifactPlan.changes,
+    ...aiResult.changes.filter(({ path }) => !autoInstalledPaths.has(path)),
+    ...wiringPlan.files.map(({ path, type }) => ({
+      type,
+      path,
+      action: type === "write" ? /** @type {const} */ ("write") : /** @type {const} */ ("update"),
+      ownership: /** @type {const} */ ("project"),
+    })),
+  ];
+  // Decided from the planned AI changes, before the state, package.json, and managed files are
+  // written. In a real apply the auto-install and the AI outputs are already written by now, so a
+  // locked artifact this cannot match to a selection fails loudly rather than being misreported.
+  const autoInstalledArtifacts = withMatchingFiles(artifactPlan.installed, recipe, aiChanges);
+  const wiringWarnings = await artifactWiringWarnings({
+    recipe,
+    vitePlusStatus: vitePlusDetection.status,
+  });
+
+  // #603: a value the person typed is recorded in the project's recipe, so configText, when set,
+  // is written instead of the copied bytes, and the change is a write, not a copy.
+  if (configText === undefined && applyOptions.recipeCopy !== undefined) {
+    const { source, bytes, unchanged } = applyOptions.recipeCopy;
+    changes.push({
+      type: unchanged ? "unchanged" : "write",
+      path: CONFIG_FILE,
+      action: "write",
+      ownership: "project",
+      from: source,
+    });
+    if (!applyOptions.dryRun && !unchanged) {
+      // planRecipeCopy found no file here, so an exclusive create fails, instead of following it,
+      // if a file or link appeared since.
+      await writeFile(CONFIG_FILE, bytes, { flag: "wx" });
+    }
+  }
+
+  if (configText !== undefined) {
+    changes.push({
+      type: configUnchanged ? "unchanged" : "write",
+      path: relative(process.cwd(), configPath),
+      action: "write",
+      ownership: "project",
+    });
+    if (!applyOptions.dryRun && !configUnchanged) {
+      await writeFile(configPath, configText);
+    }
+  }
+
+  // A package.json apply formats is unchanged only when the formatted text is the file's bytes.
+  const packageJSONWrites =
+    formattedPackageJSONText !== undefined && packageJSONTextOnDisk !== undefined
+      ? formattedPackageJSONText !== packageJSONTextOnDisk
+      : !packageJSONUnchanged;
   changes.push({
-    type: packageJSONUnchanged ? "unchanged" : "update",
+    type: packageJSONWrites ? "update" : "unchanged",
     path: "package.json",
     action: "update",
     ownership: "project",
@@ -3667,6 +3599,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ...(removedQualityScript !== undefined ? { removedQualityScript } : {}),
     ...(renamedScripts.length > 0 ? { renamedScripts } : {}),
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
+    ...(packageJSONFormatting === undefined ? {} : { formatting: packageJSONFormatting }),
   });
 
   // managedFileDeclarations in project-inspection.js sets which managed files apply writes, in order.
@@ -3695,22 +3628,29 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
 
   await applyVarlockProjectFiles(varlockFilePlans, applyOptions.dryRun, changes);
 
-  if (!applyOptions.dryRun && !packageJSONUnchanged) {
-    await writeJSON("package.json", packageJSON, false);
-  }
-
   if (!applyOptions.dryRun) {
     // The wiring is written before the state record. If a write fails part way, the next apply
     // still plans correctly: a block or group that already holds what apply would write is
     // unchanged whatever the record says, and the old record still names a block to remove.
     // Writing the record first would instead record text the files never received.
     await writeArtifactWiring(wiringPlan.files);
+    // #1085: package.json is written right before the state, whose record of a package.json
+    // Calavera created holds the hash of this text, so no other write can fail between the two.
+    // That file is written when its formatted text differs from its bytes, even when its scripts
+    // are unchanged, so it has the recorded text.
+    if (createdPackageJSONText !== undefined) {
+      if (packageJSONWrites) await writeFile("package.json", createdPackageJSONText);
+    } else if (!packageJSONUnchanged) {
+      await writeJSON("package.json", packageJSON, false);
+    }
     await mkdir(".calavera", { recursive: true });
-    await writeFile(STATE_FILE, stateText);
+    await writeFile(STATE_FILE, finalStateText);
+    // Independent of every other write: a folder apply cannot remove is reported, not an error.
+    stagingLeftovers = await removeStagingLeftovers(stagingPlan);
   }
 
-  if (installPlan?.spawn && !applyOptions.dryRun) {
-    const [command, commandArgs] = installPlan.spawn;
+  if (runPlan?.spawn && !applyOptions.dryRun) {
+    const [command, commandArgs] = runPlan.spawn;
     const spin = applyOptions.json ? null : spinner();
     spin?.start("Installing development dependencies...");
 
@@ -3719,36 +3659,94 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     } catch (error) {
       // A spinner left running keeps its timer alive, and the process never exits.
       spin?.error("Could not install development dependencies");
+      // #1085: the install may have changed a package.json Calavera created, so the record takes
+      // the file's text now, and the apply that runs the install again formats it.
+      const recordProblem =
+        createdPackageJSONText === undefined
+          ? undefined
+          : await readFile("package.json", "utf8")
+              .then((text) => recordCreatedPackageJSON(nextState, text, loadFormatter))
+              .then(
+                () => undefined,
+                (/** @type {unknown} */ recordError) => recordError,
+              );
       const written = unique([
         ...[...changes, ...aiChanges]
           .filter(({ type }) => type !== "unchanged")
           .map(({ path }) => path),
+        // Written even when its scripts are unchanged (#1085).
+        ...(createdPackageJSONText === undefined ? [] : ["package.json"]),
         STATE_FILE,
       ]);
       throw new Error(
         [
           "Calavera applied the recipe's files, package.json scripts, configuration, and state, but could not install the recipe's development dependencies, so the tools those scripts run are not installed yet.",
           `Already written: ${written.join(", ")}.`,
-          `Install command: ${formatCommand(installPlan.spawn)}`,
+          `Install command: ${formatCommand(runPlan.spawn)}`,
           describeCommandFailure(error),
-          `To finish the install, run the install command in ${process.cwd()}.`,
+          // #1085: an install run by hand changes the text the state records for a package.json
+          // Calavera created, so apply would then leave the file unformatted.
+          createdPackageJSONText === undefined
+            ? `To finish the install, run the install command in ${process.cwd()}.`
+            : `To finish the install, run apply again, which installs and formats package.json, or run the install command in ${process.cwd()}.`,
+          ...(recordProblem === undefined
+            ? []
+            : [
+                "Calavera also could not record the text of package.json in .calavera/state.json, so the next apply may leave package.json unformatted.",
+              ]),
         ].join("\n"),
-        { cause: error },
+        {
+          cause:
+            recordProblem === undefined
+              ? error
+              : new AggregateError(
+                  [error, recordProblem],
+                  "The install failed, and recording package.json in .calavera/state.json failed too.",
+                ),
+        },
       );
     }
 
     spin?.stop("Dependencies installed");
+
+    // #1085: vp add appends devDependencies as the last key of package.json, where Oxfmt would not
+    // keep it, so a package.json Calavera created is formatted again, and the record dropped. The
+    // record takes the installed text first, as after init, so a format that fails leaves a file
+    // the next apply formats.
+    if (createdPackageJSONText !== undefined) {
+      const installed = await readFile("package.json", "utf8");
+      await recordCreatedPackageJSON(nextState, installed, loadFormatter);
+      let formatted;
+      try {
+        // Parsed first, because a parser's own error quotes the file's text (#1157).
+        parseJSON(installed, "package.json");
+        formatted = await formatGeneratedText("package.json", installed, loadFormatter);
+      } catch (error) {
+        throw new Error(
+          "Calavera installed the recipe's development dependencies, but could not format package.json after the install. Fix the cause below, then run apply again, which formats package.json.",
+          { cause: error },
+        );
+      }
+      await writeFile("package.json", formatted);
+      await writeFile(STATE_FILE, stateText);
+    }
   }
 
-  return {
+  /** @type {ApplyResult} */
+  const result = {
     command: "apply",
     dryRun: applyOptions.dryRun,
     packageManager,
     dependencies: dependencyList,
-    installCommand: installPlan ? formatCommand(installPlan.command) : null,
-    installNotes: installPlan
-      ? [...installPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
+    installCommand: runPlan ? formatCommand(runPlan.command) : null,
+    installNotes: runPlan
+      ? [...runPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
       : [],
+    // installCommand stays null when apply skips the install, so the command to run later has
+    // its own field (#1022).
+    ...(skipsInstall && installPlan
+      ? { laterInstallCommand: formatCommand(installPlan.command) }
+      : {}),
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
@@ -3761,7 +3759,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       // adds the block, and not again on every apply after that.
       ...artifactCachePointers(gitignorePlan.changes),
     ],
-    autoInstalledArtifacts: artifactPlan.installed,
+    autoInstalledArtifacts,
     artifactRegistries: artifactPlan.registries,
     artifactWarnings: artifactPlan.warnings,
     artifactInputs,
@@ -3770,9 +3768,77 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     wiringChanges: wiringPlan.changes,
     wiringWarnings,
     ignoreChanges,
+    stagingLeftovers,
+    temporaryFolderLeftovers: leftoverFolders,
     recipe,
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
+  return result;
+}
+
+/**
+ * Says how formatting changes an existing package.json beyond the scripts apply writes, for the
+ * dry run and the apply summary (#1085), or returns undefined when the formatted text is the
+ * file's bytes, so apply writes nothing, or when apply changes only its scripts. Apply formats such a file only while it has the text
+ * Calavera or its install wrote.
+ *
+ * @param {PackageJSON} packageJSON The package.json apply writes, scripts included.
+ * @param {string} formatted That package.json as the formatter returns it.
+ * @param {string} current The bytes of package.json on disk now.
+ * @param {boolean} scriptsUnchanged Whether apply leaves the scripts as they are.
+ * @param {boolean} dryRun
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<string | undefined>}
+ */
+async function describePackageJSONFormatting(
+  packageJSON,
+  formatted,
+  current,
+  scriptsUnchanged,
+  dryRun,
+  loadFormatter,
+) {
+  // Apply writes nothing then.
+  if (formatted === current) return undefined;
+  const plain = `${JSON.stringify(packageJSON, null, 2)}\n`;
+  // The formatter keeps the values, so text that differs only in layout keeps the key order.
+  const reorders = `${JSON.stringify(JSON.parse(formatted), null, 2)}\n` !== plain;
+  // Only the scripts change, which the Scripts heading lists.
+  if (!reorders && formatted === plain && !scriptsUnchanged) return undefined;
+  const { description } = await loadFormatter();
+  // "it" is package.json: the summary prints this under the line that names the file, so the file
+  // is named once, and --json keeps it on the package.json change.
+  return dryRun
+    ? `Would format it with ${description}, which ${reorders ? "reorders its keys" : "changes its layout"}; Calavera or its install wrote its current text`
+    : `Formatted it with ${description}, which ${reorders ? "reordered its keys" : "changed its layout"}; Calavera or its install wrote the text it had before`;
+}
+
+/**
+ * Returns `state` with the record that Calavera created package.json and has not finished the
+ * apply that created it (#1085), holding the hash of `text`, the package.json text Calavera last
+ * wrote, or without that record when `text` is undefined.
+ *
+ * @param {CalaveraState} state
+ * @param {string | undefined} text
+ * @returns {CalaveraState}
+ */
+function withCreatedPackageJSON(state, text) {
+  const { createdPackageJSON: _recorded, ...rest } = state;
+  return text === undefined ? rest : { ...rest, createdPackageJSON: { hash: textHash(text) } };
+}
+
+/**
+ * Writes the state file with the record that Calavera created package.json with `text` (#1085).
+ *
+ * @param {CalaveraState} state
+ * @param {string} text
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ */
+async function recordCreatedPackageJSON(state, text, loadFormatter) {
+  await writeFile(
+    STATE_FILE,
+    await formatStateText(withCreatedPackageJSON(state, text), loadFormatter),
+  );
 }
 
 /**
@@ -3783,7 +3849,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {AiArtifactState[]} aiArtifacts The selected artifacts as apply installed them. The previous records of every other artifact are kept for clean.
  * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
  * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks, and the artifact cache block (#841), after apply. They replace the previous records for the same reason as `aiWiring`.
- * @param {string | null} qualityScript The value apply wrote to `quality`, or null when it wrote none, such as when it kept the project's own value (#230).
+ * @param {string | null} qualityScript The value apply wrote to `quality`, or that an earlier apply wrote and the project still has when the recipe does not request quality, or null otherwise, such as when apply kept the project's own value (#230, #968).
  * @returns {CalaveraState}
  */
 function mergeRecipeIntoState(
@@ -3806,14 +3872,6 @@ function mergeRecipeIntoState(
 
   const nextManagedFiles = [...managedFilesByPath.values()];
   const preservesToolingRecipe = managedFiles.length === 0 && aiArtifacts.length > 0;
-  // #829: an artifact the recipe no longer selects keeps the record of what apply installed, as a
-  // stale managed file does, so clean can remove its output when it is unedited and report it when
-  // it was edited. Without the record, clean could not tell the output from the person's own files.
-  const selectedAiPaths = new Set(aiArtifacts.map(({ path }) => path));
-  const nextAiArtifacts = [
-    ...aiArtifacts,
-    ...previousState.aiArtifacts.filter(({ path }) => !selectedAiPaths.has(path)),
-  ];
 
   return {
     ...previousState,
@@ -3824,7 +3882,9 @@ function mergeRecipeIntoState(
     integrations: preservesToolingRecipe ? previousState.integrations : integrations,
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
-    aiArtifacts: nextAiArtifacts,
+    // #829: an artifact the recipe no longer selects keeps the record of what apply installed, as a
+    // stale managed file does, so clean can tell its output from the person's own files.
+    aiArtifacts: mergeInstalledAiArtifacts(previousState.aiArtifacts, aiArtifacts),
     aiWiring,
     gitignoreBlocks,
     qualityScript,
@@ -3950,87 +4010,129 @@ async function assertBootstrapDirectoryAvailable(path) {
 }
 
 /**
+ * Whether an existing AGENTS.md holds no Calavera guidance, so the bootstrap must choose between
+ * appending a marked section and writing the fallback file.
+ *
+ * @param {string} contents
+ */
+function agentGuidanceNeedsMode(contents) {
+  return (
+    !contents.includes(AGENT_BOOTSTRAP_SECTION_START) && !contents.includes(AGENT_BOOTSTRAP_MARKER)
+  );
+}
+
+/**
+ * Resolved before the bootstrap writes anything, because a cancel at the prompt ends the run
+ * (#1039). The person is asked only when AGENTS.md exists and holds no Calavera guidance.
+ *
  * @param {CliOptions} options
+ * @param {AskForAgentBootstrap} ask
  * @returns {Promise<"append" | "fallback">}
  */
-async function resolveAgentBootstrapGuidanceMode(options) {
+async function resolveAgentBootstrapGuidanceMode(options, ask) {
   if (options.agentsMd) {
     return options.agentsMd;
   }
 
-  if (options.json || options.assumeYes || !process.stdin.isTTY) {
+  if (
+    !canPrompt(options) ||
+    !(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE)) ||
+    !agentGuidanceNeedsMode(await readFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, "utf8"))
+  ) {
     return "fallback";
   }
 
-  const selected = await select({
-    message: `${AGENT_BOOTSTRAP_GUIDANCE_FILE} already exists. How should Calavera add guidance?`,
-    options: [
-      {
-        value: "append",
-        label: "Append guidance",
-        hint: "Add marked Calavera guidance directly to AGENTS.md",
-      },
-      {
-        value: "fallback",
-        label: "Fallback only",
-        hint: `Leave AGENTS.md unchanged and write ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}`,
-      },
-    ],
-  });
-
-  exitIfCancel(selected);
-
-  return selected === "append" ? "append" : "fallback";
+  return ask.guidanceMode();
 }
 
 /**
  * @param {CliOptions} options
+ * @param {AskForAgentBootstrap} ask
  * @returns {Promise<McpHarness>}
  */
-async function resolveAgentBootstrapMcpHarness(options) {
+async function resolveAgentBootstrapMcpHarness(options, ask) {
   if (options.mcpHarness) {
     return options.mcpHarness;
   }
 
-  if (options.json || options.assumeYes || !process.stdin.isTTY) {
+  if (!canPrompt(options)) {
     return "skip";
   }
 
-  const selected = await select({
-    message: "Configure the Calavera MCP server for which agent harness?",
-    options: [
-      {
-        value: "claude-code",
-        label: "Claude Code",
-        hint: "Write project .mcp.json",
-      },
-      {
-        value: "codex",
-        label: "Codex",
-        hint: "Write project .codex/config.toml",
-      },
-      {
-        value: "cursor",
-        label: "Cursor",
-        hint: "Write project .cursor/mcp.json",
-      },
-      {
-        value: "opencode",
-        label: "OpenCode",
-        hint: "Write project opencode.json",
-      },
-      {
-        value: "skip",
-        label: "Skip auto-config",
-        hint: `Use ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup`,
-      },
-    ],
-  });
-
-  exitIfCancel(selected);
-
-  return assertSupportedMcpHarness(typeof selected === "string" ? selected : "skip");
+  return ask.mcpHarness();
 }
+
+/**
+ * @typedef {object} AskForAgentBootstrap
+ * @property {() => Promise<"append" | "fallback">} guidanceMode How to add guidance to an AGENTS.md that holds none from Calavera.
+ * @property {() => Promise<McpHarness>} mcpHarness The agent harness whose project MCP config `agent-init` writes, or `skip`.
+ */
+
+/**
+ * The terminal prompts of `agent-init`. A cancel ends the run through `exitIfCancel`, so
+ * `agentBootstrap` asks both before it writes anything (#1039).
+ *
+ * @type {AskForAgentBootstrap}
+ */
+const askForAgentBootstrap = {
+  async guidanceMode() {
+    const selected = await select({
+      message: `${AGENT_BOOTSTRAP_GUIDANCE_FILE} already exists. How should Calavera add guidance?`,
+      options: [
+        {
+          value: "append",
+          label: "Append guidance",
+          hint: "Add marked Calavera guidance directly to AGENTS.md",
+        },
+        {
+          value: "fallback",
+          label: "Fallback only",
+          hint: `Leave AGENTS.md unchanged and write ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}`,
+        },
+      ],
+    });
+
+    exitIfCancel(selected);
+
+    return selected === "append" ? "append" : "fallback";
+  },
+  async mcpHarness() {
+    const selected = await select({
+      message: "Configure the Calavera MCP server for which agent harness?",
+      options: [
+        {
+          value: "claude-code",
+          label: "Claude Code",
+          hint: "Write project .mcp.json",
+        },
+        {
+          value: "codex",
+          label: "Codex",
+          hint: "Write project .codex/config.toml",
+        },
+        {
+          value: "cursor",
+          label: "Cursor",
+          hint: "Write project .cursor/mcp.json",
+        },
+        {
+          value: "opencode",
+          label: "OpenCode",
+          hint: "Write project opencode.json",
+        },
+        {
+          value: "skip",
+          label: "Skip auto-config",
+          hint: `Use ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup`,
+        },
+      ],
+    });
+
+    exitIfCancel(selected);
+
+    return assertSupportedMcpHarness(typeof selected === "string" ? selected : "skip");
+  },
+};
 
 /**
  * @param {McpHarness} harness
@@ -4038,7 +4140,7 @@ async function resolveAgentBootstrapMcpHarness(options) {
  * @param {boolean} dryRun
  * @param {Change[]} changes
  * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
- * @returns {Promise<{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }>}
+ * @returns {Promise<{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string, versionCheck?: import("./utils/opencode-version.js").OpenCodeVersionCheck }>}
  */
 async function writeAgentBootstrapMcpConfig(
   harness,
@@ -4053,13 +4155,23 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      reason: `Skipped project MCP auto-config. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      reason: `Skipped project MCP auto-config. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
     };
   }
 
   /** @type {"write" | "update" | "skip"} */
   let action;
   const initialChangeCount = changes.length;
+  // An existing `calavera` entry is updated only when a release wrote it, for any package manager;
+  // any other entry is a local edit and is kept (#1205).
+  const launches = mcpLaunchCommands();
+  // ADR-0022, Decision 6: the OpenCode on PATH is checked once, before the write, only to warn.
+  const openCode = harness === "opencode" ? await checkOpenCodeVersion() : undefined;
+  const warning =
+    openCode?.versionCheck === "older"
+      ? openCodeVersionWarning(/** @type {string} */ (openCode.version))
+      : undefined;
+  const versionCheck = openCode === undefined ? {} : { versionCheck: openCode.versionCheck };
 
   try {
     switch (harness) {
@@ -4067,17 +4179,31 @@ async function writeAgentBootstrapMcpConfig(
       case "cursor":
         action = await writeMcpServersJsonConfig(
           path,
-          launchCommand,
+          harness === "cursor" ? createCursorMcpEntry(launchCommand) : launchCommand,
+          calaveraMcpEntries(harness, launches),
           dryRun,
           changes,
           loadFormatter,
         );
         break;
       case "codex":
-        action = await writeCodexMcpConfig(path, launchCommand, dryRun, changes);
+        action = await writeCodexMcpConfig(
+          path,
+          launchCommand,
+          calaveraMcpEntries(harness, launches),
+          dryRun,
+          changes,
+        );
         break;
       case "opencode":
-        action = await writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes, loadFormatter);
+        action = await writeOpenCodeMcpConfig(
+          path,
+          launchCommand,
+          openCodeMcpLocations(launches),
+          dryRun,
+          changes,
+          loadFormatter,
+        );
         break;
       default:
         action = "skip";
@@ -4087,15 +4213,26 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      // The error's own trailing period is dropped so the sentence ends once.
+      // The error's own trailing period is dropped so the sentence ends once. Without a change for
+      // the file, the warning goes on this one line that names it (ADR-0022, Decision 6).
       reason: `Could not write project MCP config at ${path}: ${(error instanceof Error
         ? error.message
         : String(error)
-      ).replace(/\.$/, "")}. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      ).replace(
+        /\.$/,
+        "",
+      )}. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}${warning === undefined ? "" : ` Warning: ${warning}`}`,
+      ...versionCheck,
     };
   }
 
-  return { harness, action, path };
+  if (warning !== undefined) {
+    // The writer lists the file exactly once, as written, updated, or kept.
+    const change = changes.slice(initialChangeCount).find((each) => each.path === path);
+    if (change !== undefined) change.warning = warning;
+  }
+
+  return { harness, action, path, ...versionCheck };
 }
 
 /**
@@ -4161,10 +4298,40 @@ async function formatAgentBootstrapGuidance(loadFormatter) {
 }
 
 /**
+ * The texts the bootstrap writes now, formatted by the project's formatter as it formats them: the
+ * guidance in each of its forms, and the MCP setup notes for each supported package manager. It
+ * also gives the MCP launch command for each supported package manager, in the order of
+ * `supportedPackageManagers`. `eject` compares a project's guidance files and MCP entries with
+ * them, because Calavera keeps no record of what it wrote there (ADR-0017, Decision 2).
+ *
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<AgentBootstrapGuidanceText & { mcp: string[], mcpLaunchCommands: { command: string, args: string[] }[] }>}
+ */
+export async function agentBootstrapTexts(loadFormatter) {
+  const [guidance, mcp] = await Promise.all([
+    formatAgentBootstrapGuidance(loadFormatter),
+    Promise.all(
+      supportedPackageManagers.map((packageManager) =>
+        formatGeneratedText(
+          AGENT_BOOTSTRAP_MCP_FILE,
+          createAgentBootstrapMcpInstructions(packageManager, mcpSetupLaunchCommands),
+          loadFormatter,
+        ),
+      ),
+    ),
+  ]);
+  return {
+    ...guidance,
+    mcp,
+    mcpLaunchCommands: mcpLaunchCommands(),
+  };
+}
+
+/**
  * @param {string} currentGuidance
  * @param {boolean} dryRun
  * @param {Change[]} changes
- * @param {CliOptions} options
+ * @param {"append" | "fallback"} mode How to add guidance when AGENTS.md holds none from Calavera.
  * @param {AgentBootstrapGuidanceText} guidanceText
  * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
  *   waits for a manual merge into AGENTS.md.
@@ -4173,7 +4340,7 @@ async function handleExistingAgentBootstrapGuidance(
   currentGuidance,
   dryRun,
   changes,
-  options,
+  mode,
   guidanceText,
 ) {
   const guidanceSection = guidanceText.section;
@@ -4221,8 +4388,6 @@ async function handleExistingAgentBootstrapGuidance(
     return false;
   }
 
-  const mode = await resolveAgentBootstrapGuidanceMode(options);
-
   if (mode === "append") {
     const nextGuidance = upsertAgentBootstrapGuidanceSection(currentGuidance, guidanceSection);
 
@@ -4258,12 +4423,13 @@ async function handleExistingAgentBootstrapGuidance(
 
 /**
  * @param {CliOptions} options
+ * @param {"append" | "fallback"} mode How to add guidance when AGENTS.md holds none from Calavera.
  * @param {Change[]} changes
  * @param {AgentBootstrapGuidanceText} guidanceText
  * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
  *   waits for a manual merge into AGENTS.md.
  */
-async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
+async function writeAgentBootstrapGuidance(options, mode, changes, guidanceText) {
   const guidance = guidanceText.file;
 
   if (!(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE))) {
@@ -4292,16 +4458,18 @@ async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
     currentGuidance,
     options.dryRun,
     changes,
-    options,
+    mode,
     guidanceText,
   );
 }
 
 /**
  * @param {Partial<CliOptions>} [options]
+ * @param {{ ask?: AskForAgentBootstrap }} [runtime] `ask` replaces the terminal prompts, so tests
+ *   can answer or cancel them (#1039). It is used only where `agent-init` could prompt.
  * @returns {Promise<AgentInitResult>}
  */
-export async function agentBootstrap(options = {}) {
+export async function agentBootstrap(options = {}, { ask = askForAgentBootstrap } = {}) {
   /** @type {CliOptions} */
   const bootstrapOptions = {
     command: "agent-init",
@@ -4321,47 +4489,81 @@ export async function agentBootstrap(options = {}) {
     bootstrapOptions.packageManager ?? detectPackageManager(detectedPackageJSON) ?? "npm",
   );
   const launchCommand = createMcpLaunchCommand(packageManager);
+  const skillSources = agentBootstrapSkillSources();
 
-  await assertBootstrapDirectoryAvailable(".calavera");
+  // #1231 (owner decision of 2026-11-23 on #1193): the folders the bootstrap writes into must be
+  // real folders, so a symbolic link on the path of any of them stops every run, a dry run as well,
+  // before anything is written. They are the base skill's folder, which the copy writes into; the
+  // folder of the manual MCP setup notes, which every harness falls back to when its MCP config
+  // cannot be written; and the folder of the state file. AGENTS.md, its fallback, and
+  // .coderabbit.yaml are in the project folder itself. #1238 covers the folders of the MCP configs.
+  await refuseLinkedArtifactFolders([
+    ...resolveAiArtifacts(AGENT_BOOTSTRAP_SKILL_RECIPE, skillSources).flatMap(
+      aiArtifactOutputPaths,
+    ),
+    dirname(AGENT_BOOTSTRAP_MCP_FILE),
+    dirname(STATE_FILE),
+  ]);
+  await assertBootstrapDirectoryAvailable(dirname(STATE_FILE));
 
   // #669: the Markdown Calavera writes is formatted by the project's formatter before anything is
   // written, so a Vite+ project's vp check accepts it, and a project whose formatter cannot load
-  // stops with nothing written. The MCP JSON is formatted when it is planned, after the guidance
-  // is written; the formatter has already run by then, but a failure there leaves AGENTS.md in
+  // stops with nothing written. The MCP JSON is formatted when it is planned, after the skill files
+  // are copied and the guidance is written; the formatter has already run by then, but a failure there leaves AGENTS.md in
   // place and is reported as a manual MCP setup.
   const loadFormatter = projectFormatterLoader(process.cwd());
   const [guidanceText, mcpInstructions] = await Promise.all([
     formatAgentBootstrapGuidance(loadFormatter),
     formatGeneratedText(
       AGENT_BOOTSTRAP_MCP_FILE,
-      createAgentBootstrapMcpInstructions(packageManager),
+      createAgentBootstrapMcpInstructions(packageManager, mcpSetupLaunchCommands),
       loadFormatter,
     ),
   ]);
 
   const previousState = await readStateIfPresent();
+  // #986: the skill records are planned without writing, as apply plans them (#838), so the state
+  // that records them is formatted before any skill file is copied.
   const aiResult = await buildAiApplyResult(
     AGENT_BOOTSTRAP_SKILL_RECIPE,
-    { dryRun: bootstrapOptions.dryRun },
+    { dryRun: true },
     previousState,
-    agentBootstrapSkillSources(),
+    skillSources,
   );
+  // #956: an output that already matches is reported as skipped, as the bootstrap reports its
+  // other files that it leaves unchanged.
   /** @type {Change[]} */
-  const changes = [...aiResult.changes];
-  // #838: formatted in the dry run as well, and before the guidance and MCP files are written. The
-  // skill files are already written by now, so a formatter failure here leaves them without a
-  // state record.
+  const changes = aiResult.changes.map((change) =>
+    change.type === "unchanged"
+      ? { ...change, type: "skip", reason: "Already up to date." }
+      : change,
+  );
+  // #838: formatted in the dry run as well, and before agent-init writes any file, so a project
+  // whose formatter cannot format the state is left unchanged.
   const stateText = await formatStateText(
     mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
     loadFormatter,
   );
+  // #1039: both prompts come before the first write, because a cancel at either one ends the run
+  // through exitIfCancel's process.exit(0), and a file written before it would stay unrecorded.
+  const guidanceMode = await resolveAgentBootstrapGuidanceMode(bootstrapOptions, ask);
+  const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions, ask);
+
+  if (!bootstrapOptions.dryRun) {
+    await buildAiApplyResult(
+      AGENT_BOOTSTRAP_SKILL_RECIPE,
+      { dryRun: false },
+      previousState,
+      skillSources,
+    );
+  }
 
   const fallbackGuidanceAwaitsMerge = await writeAgentBootstrapGuidance(
     bootstrapOptions,
+    guidanceMode,
     changes,
     guidanceText,
   );
-  const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
   const mcp = await writeAgentBootstrapMcpConfig(
     mcpHarness,
     launchCommand,
@@ -4414,7 +4616,9 @@ export async function agentBootstrap(options = {}) {
       ...aiResult.pointers,
       ...(fallbackGuidanceAwaitsMerge
         ? [
-            `Merge ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
+            // #1020: the fallback is always written, updated, or skipped under Changes when it
+            // awaits a merge, so the note points there instead of naming it a second time.
+            `Merge the fallback guidance listed under Changes into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
           ]
         : []),
       // Only a manual MCP setup carries a reason.
@@ -4477,8 +4681,20 @@ export const NPM_STALE_CACHE_HINT =
   'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older create-vite-plus or vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the rows that show create-vite-plus or vite-plus, run "npm cache npx rm <key>" with the key from each row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
 
 /**
- * The environment `vp create` receives (#689): Calavera's own, without the
- * npm exec settings that describe how Calavera was launched. `npx --package`
+ * Corepack's auto-pin: when no `package.json` from the working directory up
+ * sets `packageManager`, Corepack writes that field into the outermost
+ * `package.json` it found, before it runs the package manager. Corepack 0.32.0
+ * and earlier pin unless COREPACK_ENABLE_AUTO_PIN is "0"; Corepack 0.33.0 and
+ * later pin only when it is "1". So "0" is the one value that turns auto-pin
+ * off in every version, and from Node.js 25 on, users install whichever
+ * Corepack they choose from npm. `vp create` (#1080) is not approval to change
+ * a `package.json` outside the new project, so it sets the variable to "0".
+ */
+const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
+
+/**
+ * The environment `vp create` receives (#689, #1109): Calavera's own, without
+ * the settings that describe how Calavera was launched. `npx --package`
  * sets `npm_config_package` and `npx -c` sets `npm_config_call` for the
  * process they start, and an npm command Calavera's child starts would read
  * them too. With `npm_config_package`, `npm create vite-plus@latest` and the
@@ -4486,16 +4702,38 @@ export const NPM_STALE_CACHE_HINT =
  * create-project-calavera and exited 127 (#670). With `npm_config_call`,
  * `npm create vite-plus@latest` ran Calavera's own command line again instead
  * of create-vite-plus (libnpmexec runs `call` before its arguments). npm reads the
- * `npm_config_` prefix in any case, so the match ignores case. Every other
- * variable passes through unchanged.
+ * `npm_config_` prefix in any case, so the match ignores case.
+ *
+ * `npm_config_user_agent` names the launcher too (#1109). Vite+ picks the
+ * package manager of a new project from it, and `npm create` and `bunx` pass
+ * an inherited value on instead of setting their own. Without its removal,
+ * Vite+ would follow the package manager that launched Calavera, not the
+ * runner Calavera chose and its confirmation names, whenever Calavera falls
+ * back to npm (under an unrecognized launcher) and with
+ * `--package-manager npm` or `bun` before `--new` under another launcher. npm reads a `-` for the
+ * `_` inside a setting's name as well (`loadEnv` in `@npmcli/config`), so the
+ * match accepts both.
+ *
+ * COREPACK_ENABLE_AUTO_PIN is "0" (#1080), as NO_COREPACK_AUTO_PIN explains,
+ * even when the user set "1": Corepack runs `pnpm dlx` and `yarn dlx`, and
+ * would otherwise pin a `package.json` above the new project, whether the run
+ * succeeds or fails. A user's own value is removed in any case, as Windows
+ * reads it, so only the "0" remains. Every other variable passes through
+ * unchanged.
  *
  * @param {Record<string, string | undefined>} env
  * @returns {Record<string, string | undefined>}
  */
 export function vpCreateEnvironment(env) {
-  return Object.fromEntries(
-    Object.entries(env).filter(([key]) => !/^npm_config_(package|call)$/i.test(key)),
-  );
+  return {
+    ...Object.fromEntries(
+      Object.entries(env).filter(
+        ([key]) =>
+          !/^(npm_config_(package|call|user[-_]agent)|COREPACK_ENABLE_AUTO_PIN)$/i.test(key),
+      ),
+    ),
+    ...NO_COREPACK_AUTO_PIN,
+  };
 }
 
 /**
@@ -4503,163 +4741,8 @@ export function vpCreateEnvironment(env) {
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
- * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
- * @property {(cwd: string) => Promise<string>} [readYarnCorepackRoot]
  * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read, and the base of the environment `vp create` receives; `process.env` by default.
  */
-
-const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
-
-// The runner has already failed, so the version read must not delay its error.
-export const YARN_VERSION_TIMEOUT_MS = 5000;
-
-/**
- * Reads the version of the `yarn` that runs in `cwd`, where Corepack resolves
- * the same Yarn the runner used. Stdin is closed, so a prompt (such as
- * Corepack's download prompt) fails at once instead of waiting, and a time
- * limit stops a yarn that hangs. It rejects when yarn cannot start, exits
- * non-zero, or times out.
- *
- * @param {string} cwd
- * @returns {Promise<string>}
- */
-async function readInstalledYarnVersion(cwd) {
-  const { stdout } = await execa("yarn", ["--version"], {
-    cwd,
-    stdin: "ignore",
-    timeout: YARN_VERSION_TIMEOUT_MS,
-  });
-
-  return stdout;
-}
-
-/**
- * Asks the `yarn` that runs in `cwd` whether Corepack ran it (#936). Corepack
- * sets COREPACK_ROOT in its own process before it runs yarn there, and Yarn 1's
- * `node` command passes that environment to the Node process it starts, so
- * `yarn node` prints a `COREPACK_ROOT=` line whose value is empty unless
- * Corepack ran yarn. COREPACK_ROOT is removed from the environment yarn
- * receives, in any case as Windows reads it, so a value Calavera inherited, for
- * example from a Corepack pnpm that started it, cannot pass for Corepack.
- * Without COREPACK_ROOT, Yarn 1 refuses to run in a project whose
- * `packageManager` names Yarn 2 or later, so SKIP_YARN_COREPACK_CHECK turns
- * that check off, as Yarn 1's cli.js reads it. Stdin and the time limit are as
- * for readInstalledYarnVersion. It rejects when yarn cannot start, exits
- * non-zero, or times out.
- *
- * @param {string} cwd
- * @returns {Promise<string>}
- */
-async function readInstalledYarnCorepackRoot(cwd) {
-  const { stdout } = await execa(
-    "yarn",
-    ["node", "-e", 'console.log("COREPACK_ROOT=" + (process.env.COREPACK_ROOT ?? ""))'],
-    {
-      cwd,
-      // extendEnv: false, so the COREPACK_ROOT removed here is not merged back from process.env.
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "COREPACK_ROOT"),
-        ),
-        SKIP_YARN_COREPACK_CHECK: "1",
-      },
-      extendEnv: false,
-      stdin: "ignore",
-      timeout: YARN_VERSION_TIMEOUT_MS,
-    },
-  );
-
-  return stdout;
-}
-
-/**
- * The first line of a failure, for a hint. execa's shortMessage names the
- * command and the failure without its output.
- *
- * @param {unknown} error
- */
-function failureReason(error) {
-  return error instanceof ExecaError
-    ? error.shortMessage.split("\n")[0]
-    : error instanceof Error
-      ? error.message.split("\n")[0]
-      : String(error);
-}
-
-/**
- * The hint for a failed `yarn dlx` run (#911). The runner inherits stdio, so
- * Calavera cannot read Yarn's error; the Yarn version decides instead. Yarn 0
- * and 1 have no dlx command. Yarn 2 or later has one, so the cause is
- * elsewhere and no Yarn hint is added. An unreadable version keeps the hint
- * that states its own condition, with the reason the version was unreadable.
- *
- * Under Yarn 0 or 1, Corepack decides whether that Yarn ran `yarn dlx` (#936).
- * Corepack runs `yarn dlx` with its own Yarn 2 or later unless the project
- * pins a Yarn in its `packageManager` field, while `yarn --version` reports the
- * default Yarn, which can be Yarn 1. So when Corepack ran yarn, the hint does
- * not name Yarn 1 as the cause, and when Calavera cannot tell, it keeps the
- * hint that states its own condition.
- *
- * @param {(cwd: string) => Promise<string | undefined>} readYarnVersion
- * @param {(cwd: string) => Promise<string>} readYarnCorepackRoot
- * @param {string} cwd
- * @returns {Promise<{ hint: string, cause?: unknown }>}
- */
-async function yarnFailureHint(readYarnVersion, readYarnCorepackRoot, cwd) {
-  let output;
-
-  try {
-    output = await readYarnVersion(cwd);
-  } catch (error) {
-    return {
-      hint: ` ${YARN_DLX_HINT} Calavera could not read the Yarn version: ${failureReason(error)}.`,
-      cause: error,
-    };
-  }
-
-  const match = /^((\d+)\.\d+\.\d+\S*)/.exec(output ?? "");
-
-  if (match === null) {
-    const printed = output?.split("\n")[0];
-
-    return {
-      hint: ` ${YARN_DLX_HINT}${
-        printed === undefined
-          ? ""
-          : ` yarn --version printed ${printed === "" ? "nothing" : `"${printed}"`}, which is not a version.`
-      }`,
-    };
-  }
-
-  const [, version, major] = match;
-
-  if (Number(major) >= 2) {
-    return { hint: "" };
-  }
-
-  const unsure = ` ${YARN_DLX_HINT} yarn --version reports Yarn ${version}, but Calavera could not tell whether Corepack ran yarn:`;
-  let probe;
-
-  try {
-    probe = await readYarnCorepackRoot(cwd);
-  } catch (error) {
-    return { hint: `${unsure} ${failureReason(error)}.`, cause: error };
-  }
-
-  // . stops at a line terminator, \r included, so the value ends where its line does.
-  const corepackRoot = /^COREPACK_ROOT=(.*)/m.exec(probe)?.[1];
-
-  if (corepackRoot === undefined) {
-    return { hint: `${unsure} yarn node printed no COREPACK_ROOT line.` };
-  }
-
-  return {
-    hint:
-      corepackRoot === ""
-        ? ` The yarn in this directory is Yarn ${version}, which has no dlx command, so it could not start Vite+. Use Yarn 2 or later, for example through Corepack, or pass another --package-manager before --new.`
-        : ` yarn --version reports Yarn ${version}, but Corepack runs yarn dlx with Yarn 2 or later unless the project pins Yarn 1, for example in the packageManager field of package.json. If it does, pin Yarn 2 or later or pass another --package-manager before --new.`,
-  };
-}
 
 /**
  * Spawns the runner with inherited stdio, so Vite+ asks its own questions.
@@ -4801,8 +4884,20 @@ async function readNewProjectRecipe(source) {
     );
   }
 
+  let recipe;
+
   try {
-    validateRecipe(JSON.parse(bytes.toString("utf8")));
+    recipe = parseJSON(bytes.toString("utf8"), source);
+  } catch (error) {
+    if (!(error instanceof JSONParseError)) throw error;
+    // #1157: what is wrong, and where, with no cause, because JSON.parse's message quotes the file.
+    throw new Error(
+      `--new refused: ${source}, given with --config, cannot be parsed as JSON: ${error.problem}. Nothing was run and no files were changed.`,
+    );
+  }
+
+  try {
+    validateRecipe(recipe);
   } catch (error) {
     throw new Error(
       `--new refused: ${source}, given with --config, is not a valid recipe: ${(error instanceof
@@ -4822,8 +4917,12 @@ async function readNewProjectRecipe(source) {
  * `vp create`, per the ADR-0010 amendment "The Launching Package Manager
  * Chooses the Runner" (#909). Its name is the text of `npm_config_user_agent`
  * before the first `/`, as Vite+ reads it for the same decision. Yarn counts
- * only at major version 2 or later, because Yarn 1 has no dlx command; a Yarn
- * whose version cannot be read could be Yarn 1, so it does not count either.
+ * only at major version 2 or later. Calavera stops when Yarn 1 starts it
+ * (ADR-0023), but a `yarn/1` user agent still reaches this function under npm,
+ * whose project `.npmrc` `user-agent` sets the variable while npm_execpath names
+ * npm, so the runner is then npm, which did start Calavera. Yarn sets its own
+ * version in the user agent, so a value without one did not come from Yarn and
+ * counts as an unrecognized launcher.
  *
  * @param {string | undefined} userAgent For example `yarn/4.18.1 npm/? node/v24.22.0 darwin arm64`.
  * @returns {PackageManager | undefined} `undefined` when the caller falls back to npm.
@@ -4846,7 +4945,7 @@ export function launchingPackageManager(userAgent) {
 
 /**
  * @param {string} runner
- * @param {PackageManager} runnerPackageManager The package manager Vite+ uses outside an existing project, unless one is forwarded or VP_PACKAGE_MANAGER is set.
+ * @param {PackageManager} runnerPackageManager The package manager Vite+ uses outside an existing project, and inside one where it detects none, unless one is forwarded or VP_PACKAGE_MANAGER is set.
  * @param {string} cwd
  * @param {VitePlusDetection} cwdDetection
  * @param {string} [recipeSource] Absolute path of the recipe `--config` copies.
@@ -4860,7 +4959,7 @@ function newProjectConfirmation(runner, runnerPackageManager, cwd, cwdDetection,
     "- The runner may download Vite+ before it starts.",
     "- Vite+ asks its own questions (template, target directory, and the rest) unless the forwarded flags answer them. Calavera does not answer them.",
     `- Outside an existing project, Vite+ uses ${runnerPackageManager} as the project's package manager unless --package-manager is forwarded after --new.`,
-    "- Inside an existing project, Vite+ uses the package manager it detects there unless --package-manager is forwarded. Inside a monorepo, Vite+ uses the package manager it detects for the monorepo even when --package-manager is forwarded. A VP_PACKAGE_MANAGER environment variable overrides all of these.",
+    `- Inside an existing project, Vite+ uses the package manager it detects there unless --package-manager is forwarded. When that project's package.json has no packageManager or devEngines.packageManager field and its folder has no lockfile or package-manager configuration file that Vite+ reads (an .npmrc does not count), Vite+ detects none and uses ${runnerPackageManager}. Inside a monorepo, Vite+ uses the package manager it detects for the monorepo even when --package-manager is forwarded. A VP_PACKAGE_MANAGER environment variable overrides all of these.`,
     "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
     "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",
     "- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.",
@@ -4879,13 +4978,26 @@ function newProjectConfirmation(runner, runnerPackageManager, cwd, cwdDetection,
 }
 
 /**
+ * #1079: the one rule `init` and `--new` share for when Calavera cannot show a prompt. A set `CI`
+ * counts, as it does for Vite+, because a CI job with a pseudo-terminal would otherwise wait on the
+ * prompt forever.
+ *
+ * @returns {string[]} Each reason, empty when Calavera can ask.
+ */
+function cannotPromptReasons() {
+  return [
+    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+    ...(process.env.CI ? ["CI is set"] : []),
+  ];
+}
+
+/**
  * @param {CliOptions} options
  * @returns {string[]}
  */
 function nonInteractiveReasons(options) {
   return [
-    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
-    ...(process.env.CI ? ["CI is set"] : []),
+    ...cannotPromptReasons(),
     ...((options.newArgs ?? []).includes("--no-interactive")
       ? ["--no-interactive was forwarded to vp create"]
       : []),
@@ -4997,31 +5109,17 @@ export async function newProject(options, runtime = {}) {
 
     // The runner was not chosen by the user, so name how it was chosen and how to choose another (#909).
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when that package manager has no runner. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
+      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when Calavera does not recognize that package manager. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
       { cause: error },
     );
   }
 
   if (exit.exitCode !== 0) {
-    const yarn =
-      runnerCommand.command === "yarn"
-        ? await yarnFailureHint(
-            runtime.readYarnVersion ?? readInstalledYarnVersion,
-            runtime.readYarnCorepackRoot ?? readInstalledYarnCorepackRoot,
-            cwd,
-          )
-        : undefined;
-
     throw new Error(
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
-        yarn !== undefined
-          ? yarn.hint
-          : // Exit 127 means a shell did not find a command, which no cache change fixes.
-            runnerCommand.command !== "npm" || exit.exitCode === 127
-            ? ""
-            : ` ${NPM_STALE_CACHE_HINT}`
+        // Exit 127 means a shell did not find a command, which no cache change fixes.
+        runnerCommand.command !== "npm" || exit.exitCode === 127 ? "" : ` ${NPM_STALE_CACHE_HINT}`
       }`,
-      yarn?.cause === undefined ? undefined : { cause: yarn.cause },
     );
   }
 
@@ -5135,141 +5233,6 @@ function exitIfCancel(value) {
 }
 
 /**
- * @param {Recipe} recipe
- * @param {{ integrations: unknown[], dependencies: string[], aiArtifacts: unknown[] }} explanation
- * @returns {string}
- */
-function formatRecipeSummary(recipe, explanation) {
-  return [
-    `${style("bold", "Profile")}: ${recipe.profile}`,
-    `${style("bold", "Package manager")}: ${recipe.packageManager}`,
-    `${style("bold", "Integrations")}: ${pluralizeCount((recipe.integrations ?? []).length, "item")}`,
-    `${style("bold", "Dependencies")}: ${
-      explanation.dependencies.length > 0 ? explanation.dependencies.join(", ") : "none"
-    }`,
-    `${style("bold", "AI artifacts")}: ${explanation.aiArtifacts.length}`,
-  ].join("\n");
-}
-
-/**
- * @param {ApplyResult} result
- * @returns {string}
- */
-function formatApplySummary(result) {
-  const changedPaths = result.changes
-    .filter(({ type }) => type !== "unchanged")
-    .map((change) => change.path);
-
-  return [
-    `${style("bold", "Package manager")}: ${result.packageManager}`,
-    `${style("bold", "Integrations")}: ${result.integrations.join(", ") || "none"}`,
-    `${style("bold", "Dev dependencies")}: ${result.dependencies.join(", ") || "none"}`,
-    `${style("bold", "Artifacts to lock")}: ${
-      result.autoInstalledArtifacts
-        .map(({ id, package: packageName, version }) => `${id} (${packageName}@${version})`)
-        .join(", ") || "none"
-    }`,
-    ...result.artifactRegistries.map(
-      (registry) => `${style("bold", "Artifact registry")}: ${formatArtifactRegistry(registry)}`,
-    ),
-    ...result.artifactWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.artifactInputs.map(
-      (input) => `${style("bold", "Input")}: ${formatArtifactInput(input)}`,
-    ),
-    ...result.integrationInputs.map(
-      (input) => `${style("bold", "Input")}: ${formatIntegrationInput(input)}`,
-    ),
-    ...result.inputWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.wiringChanges
-      .flatMap(formatWiringChange)
-      .map((line) => `${style("bold", "Wiring")}: ${line}`),
-    ...result.wiringWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.ignoreChanges
-      .map(formatIgnoreChange)
-      .map((line) => `${style("bold", "Ignore")}: ${line}`),
-    `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
-  ].join("\n");
-}
-
-/**
- * The lines a dry run shows for one artifact's wiring, so the approval covers the exact text.
- *
- * @param {WiringChange} change
- * @returns {string[]}
- */
-function formatWiringChange({
-  artifact,
-  path,
-  kind,
-  type,
-  block,
-  removedBlock,
-  groupChanges,
-  reformatted,
-  deselected,
-}) {
-  const because = deselected
-    ? `because the recipe no longer selects ${artifact}`
-    : `because ${artifact} no longer wires that hook`;
-  if (removedBlock !== undefined) {
-    return [
-      `Would remove the ${artifact} block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
-    ];
-  }
-  if (kind === "vite-hook") {
-    return [
-      type === "unchanged"
-        ? `${path} already holds the ${artifact} block: ${quoteScriptValue(block)}`
-        : `Would ${type} the ${artifact} block in ${path}: ${quoteScriptValue(block)}`,
-    ];
-  }
-  if (type === "unchanged") return [`${path} already holds the ${artifact} hook groups`];
-  return [
-    ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
-      action === "add"
-        ? `Would add a ${event} group for ${artifact} to ${path}: ${quoteScriptValue(group)}`
-        : action === "replace"
-          ? `Would replace the ${event} group for ${artifact} in ${path}: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
-          : `Would remove the ${event} group for ${artifact} from ${path}${deselected ? `, because the recipe no longer selects ${artifact}` : ""}: ${quoteScriptValue(previous)}`,
-    ),
-    ...(reformatted
-      ? [
-          `Would also change the layout of the rest of ${path}, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
-        ]
-      : []),
-  ];
-}
-
-/**
- * The line a dry run shows for one integration's part of an ignore file, so the approval covers
- * the exact lines.
- *
- * @param {IgnoreChange} change
- * @returns {string}
- */
-function formatIgnoreChange({ path, integration, type, lines, previousLines, removedLines }) {
-  const quoted = (/** @type {string[]} */ values) => values.map(quoteScriptValue).join(", ");
-  if (removedLines !== undefined) {
-    if (integration === undefined) {
-      return `Would remove from ${path}, because no selected integration declares them: ${quoted(removedLines)}`;
-    }
-    const because =
-      integration === ARTIFACT_CACHE_BLOCK
-        ? "the recipe selects no artifacts and .calavera/cache/ does not exist"
-        : `${integration} no longer adds lines to it`;
-    return `Would remove the ${integration} block from ${path}, because ${because}: ${quoted(removedLines)}`;
-  }
-  const what = path === GITIGNORE_PATH ? `the ${integration} block` : `the ${integration} lines`;
-  if (type === "unchanged") {
-    return `${path} already holds ${what}: ${quoted(lines ?? [])}`;
-  }
-  if (previousLines !== undefined) {
-    return `Would replace ${what} in ${path}: ${quoted(previousLines)} with ${quoted(lines ?? [])}`;
-  }
-  return `Would add ${what} to ${path}: ${quoted(lines ?? [])}`;
-}
-
-/**
  * @param {{ json?: boolean, assumeYes?: boolean }} options
  * @returns {boolean}
  */
@@ -5363,6 +5326,35 @@ async function promptForInputValue({ prompt, defaultValue, error }, label) {
 }
 
 /**
+ * #998: init refuses a prompt it cannot show, as --new does, instead of letting the prompt end
+ * when standard input closes, which exited 0 without a recipe, or print into --json output.
+ *
+ * @param {CliOptions} options
+ * @param {string} question The prompt's message.
+ * @param {string} remedy The sentence that names the flags that answer the prompt without asking it.
+ */
+function assertInitCanAsk(options, question, remedy) {
+  const reasons = [
+    ...(options.json ? ["--json was given, so the prompt would corrupt the JSON output"] : []),
+    ...cannotPromptReasons(),
+  ];
+  if (reasons.length > 0) {
+    throw new Error(
+      `init refused: Calavera cannot ask "${question}" because ${reasons.join(", and ")}. ${remedy}`,
+    );
+  }
+}
+
+/**
+ * The prompts `init` asks for its recipe and its apply confirmation, which `CliOptions.initPrompts`
+ * replaces in tests (#1092).
+ *
+ * @typedef {{ select: typeof select, groupMultiselect: typeof groupMultiselect, confirm: typeof confirm }} InitPrompts
+ */
+
+const terminalInitPrompts = { select, groupMultiselect, confirm };
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<string>}
  */
@@ -5373,9 +5365,17 @@ async function promptForProfile(options) {
     return defaultProfile;
   }
 
+  if (options.profile === undefined) {
+    assertInitCanAsk(
+      options,
+      "Choose a tooling profile",
+      "Pass --yes to use the defaults, or answer it with --profile.",
+    );
+  }
+
   const selected =
     options.profile ??
-    (await select({
+    (await (options.initPrompts ?? terminalInitPrompts).select({
       message: "Choose a tooling profile",
       options: supportedProfiles.map((id) => ({
         value: id,
@@ -5394,11 +5394,19 @@ async function promptForProfile(options) {
  * @returns {Promise<PackageManager>}
  */
 async function promptForPackageManager(options, detectedPackageManager) {
+  if (options.packageManager === undefined && !options.assumeYes) {
+    assertInitCanAsk(
+      options,
+      "Choose a package manager",
+      "Pass --yes to use the defaults, or answer it with --package-manager.",
+    );
+  }
+
   const selected =
     options.packageManager ??
     (options.assumeYes
       ? detectedPackageManager
-      : await select({
+      : await (options.initPrompts ?? terminalInitPrompts).select({
           message: "Choose a package manager",
           initialValue: detectedPackageManager,
           options: recipePackageManagers.map((id) => ({
@@ -5431,7 +5439,7 @@ async function promptForIntegrations(options, profile) {
     return defaults;
   }
 
-  const selected = await groupMultiselect({
+  const selected = await (options.initPrompts ?? terminalInitPrompts).groupMultiselect({
     message: "Choose integration packs",
     options: groupedPromptOptions(listIntegrationOptions(profile)),
     initialValues: defaults,
@@ -5459,8 +5467,13 @@ async function promptForAiArtifacts(options) {
     return options.aiArtifacts;
   }
 
+  assertInitCanAsk(
+    options,
+    "Choose AI artifacts",
+    "Pass --yes to use the defaults, or answer it with --ai-artifact.",
+  );
   const artifactOptions = listAiArtifactOptions();
-  const selected = await groupMultiselect({
+  const selected = await (options.initPrompts ?? terminalInitPrompts).groupMultiselect({
     message: "Choose AI artifacts",
     options: groupedPromptOptions(artifactOptions),
     initialValues: [],
@@ -5484,10 +5497,11 @@ async function promptForAiArtifacts(options) {
       continue;
     }
 
-    const target = await text({
-      message: `Target directory for ${artifact.label}`,
-      defaultValue: artifact.defaultTarget,
-      placeholder: artifact.defaultTarget,
+    // #990: recipe validation accepts only the artifact's target IDs, so the prompt offers those.
+    const target = await (options.initPrompts ?? terminalInitPrompts).select({
+      message: `Target for ${artifact.label}`,
+      options: artifactTargetPromptOptions(artifact),
+      initialValue: artifact.defaultTarget,
     });
 
     exitIfCancel(target);
@@ -5498,15 +5512,20 @@ async function promptForAiArtifacts(options) {
 }
 
 /**
+ * The question `init --apply` asks after its dry run, and names when it refuses to ask it.
+ */
+const APPLY_NOW_QUESTION = "Apply these Calavera-managed changes now?";
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<InitResult>}
  */
 export async function initRecipe(options) {
+  const detection = await detectVitePlus(process.cwd());
   // #430: init writes the recipe before it applies, so a manifest choice that would not apply here
   // stops before anything is asked or written. That includes a choice where there is no decision,
   // because ignoring abandon would write and apply the recipe.
   if (options.apply) {
-    const detection = await detectVitePlus(process.cwd());
     const decision = manifestDecision(process.cwd(), detection);
     if (!decision && options.manifestChoice !== undefined) {
       throw manifestChoiceNotApplicableError(process.cwd(), detection);
@@ -5515,6 +5534,17 @@ export async function initRecipe(options) {
       throw initApplyManifestChoiceError(decision);
     }
   }
+  // #669: the recipe is formatted as apply formats it, so a Vite+ project's vp check accepts it. A
+  // directory without a package.json of its own follows the parent's verdict, as apply does under
+  // create-here (#961), whether or not init also applies (#1086).
+  const configPath = relative(process.cwd(), resolve(options.config));
+  const loadFormatter = projectFormatterLoader(process.cwd(), formatterVitePlusStatus(detection), {
+    installDirectory: vitePlusInstallDirectory(detection),
+  });
+  // A formatter that cannot load, such as a parent whose vite-plus is not installed, stops init
+  // here, before the wizard asks anything, but after the manifest-choice checks above, so a choice
+  // init --apply refuses gets that refusal, not the vp install remedy (#1086).
+  await generatedJSONFormatter(configPath, loadFormatter);
 
   if (!options.json) {
     console.clear();
@@ -5529,8 +5559,18 @@ export async function initRecipe(options) {
   const packageManager = await promptForPackageManager(options, detectedPackageManager);
   const integrations = await promptForIntegrations(options, profile);
   const aiArtifacts = await promptForAiArtifacts(options);
+  // The apply confirmation comes after the recipe is written, so refuse it before writing.
+  if (options.apply && !options.assumeYes) {
+    assertInitCanAsk(
+      options,
+      APPLY_NOW_QUESTION,
+      "Pass --yes to apply after the dry run without asking, or remove --apply to only write the recipe.",
+    );
+  }
   // The recipe written below records every input, so apply neither asks again nor refuses it.
-  const interactive = canPrompt(options);
+  // canPrompt ignores CI, so the wizard adds the #1079 rule. apply, eject, and
+  // --init still use canPrompt alone, which is a known gap outside #1079.
+  const interactive = canPrompt(options) && cannotPromptReasons().length === 0;
   const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(
     composeRecipe({
       profile,
@@ -5551,36 +5591,31 @@ export async function initRecipe(options) {
     { ask: interactive ? askForTestRunner : undefined },
   );
   const validation = validateRecipeResponse(recipe);
+  // explainRecipeResponse validates and throws, so a recipe that fails validation stops here,
+  // before the write below (#1077).
   const explanation = explainRecipeResponse(recipe);
 
-  // #669: formatted as apply formats it, so a Vite+ project's vp check accepts the recipe file.
+  // The text is the recipe init composed, never a recipe file read from disk, so a person's own
+  // file is never reformatted.
   const configText = await formatGeneratedText(
-    relative(process.cwd(), resolve(options.config)),
+    configPath,
     `${JSON.stringify(recipe, null, 2)}\n`,
-    projectFormatterLoader(process.cwd()),
+    loadFormatter,
   );
+  // #1220: the same check apply runs before its recipe write (#1208), so a link at the recipe path
+  // never leads init's write outside the project. It runs in the dry run as well, as in apply, and
+  // before init --apply reaches apply, so nothing is written. Init stopped before it wrote the
+  // recipe, so each remedy tells the person to run init again, not apply.
+  await assertRecipeWriteTarget(resolve(options.config), process.cwd(), "init");
   if (!options.dryRun) {
     await writeFile(options.config, configText);
   }
 
   if (!options.json) {
-    note(formatRecipeSummary(recipe, explanation), "Recipe summary");
-    // Nobody was asked for a value taken from the default, so say which one it was and where it
-    // is recorded.
-    for (const { artifact, name, value, index } of artifactInputs.filter(
-      ({ source }) => source === "default",
-    )) {
-      logger.info(
-        `Input: ${artifact} ${name} = ${value}, the default, recorded as ai[${index}].inputs.${name} in ${options.config}. Change it there if it is wrong.`,
-      );
-    }
-    for (const { integration, name, value, path } of integrationInputs.filter(
-      ({ source }) => source === "default",
-    )) {
-      logger.info(
-        `Input: ${integration} ${name} = ${value}, the default, recorded as ${path} in ${options.config}. Change it there if it is wrong.`,
-      );
-    }
+    note(initRecipeSummary(recipe, explanation, options.apply), "Recipe summary");
+    printSummaryLines(
+      initDefaultInputLines(artifactInputs, integrationInputs, options.config, options.apply),
+    );
   }
 
   /** @type {ApplyResult | undefined} */
@@ -5597,13 +5632,13 @@ export async function initRecipe(options) {
     });
 
     if (!options.json) {
-      note(formatApplySummary(applyDryRun), "Apply dry run");
+      printSummaryLines(initApplyDryRunLines(applyDryRun, options));
     }
 
     const shouldApply =
       options.assumeYes ||
-      (await confirm({
-        message: "Apply these Calavera-managed changes now?",
+      (await (options.initPrompts ?? terminalInitPrompts).confirm({
+        message: APPLY_NOW_QUESTION,
         initialValue: false,
       }));
 
@@ -5645,116 +5680,331 @@ export async function initRecipe(options) {
 }
 
 /**
- * @param {CliOptions} options
- * @returns {Promise<DoctorResult>}
+ * The removed toolchain integrations a recipe selects that the #431 warning covers: none unless
+ * Vite+ manages the project. `removedToolchainWarnings` and `unknownIntegrationWarnings` both read
+ * this, so a removed id gets exactly one of the two warnings.
+ *
+ * @param {Recipe} recipe
+ * @param {VitePlusDetection} detection
  */
-async function doctor(options) {
-  const hasConfig = await fileExists(options.config);
-  const hasPackageJSON = await fileExists("package.json");
-  /** @type {{ level: "error" | "warning", message: string }[]} */
-  const issues = [];
+function vitePlusRemovedToolchainSelections(recipe, detection) {
+  if (detection.status !== "managed") {
+    return [];
+  }
 
-  if (!hasConfig) {
-    issues.push({
-      level: "error",
-      message: `Missing ${options.config}. Run create-project-calavera init first.`,
+  const selected = new Set(recipe.integrations ?? []);
+  return removedToolchainIntegrations.filter(({ id }) => selected.has(id));
+}
+
+/**
+ * One warning for each JavaScript or TypeScript toolchain integration a recipe still selects in a
+ * project Vite+ manages (#431). The removals (ADR-0002 to ADR-0006) made these ids unknown, so
+ * apply refuses the recipe while `resolveRecipeIntegrations` drops them silently. Detection is the
+ * same ADR-0001 function `inspect_project` reads; any status other than `managed` yields nothing.
+ *
+ * @param {Recipe} recipe
+ * @param {VitePlusDetection} detection
+ * @param {string} configPath
+ * @returns {{ level: "warning", message: string }[]}
+ */
+export function removedToolchainWarnings(recipe, detection, configPath) {
+  return vitePlusRemovedToolchainSelections(recipe, detection).map(({ id, provides }) => ({
+    level: "warning",
+    message: `${configPath} selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from ${configPath}; apply refuses the recipe until you do.`,
+  }));
+}
+
+/**
+ * One warning when a recipe names a profile that ADR-0011 removed (#1082), because apply's recipe
+ * validation refuses it. The warning names the profile by its fixed key in
+ * `removedProfileReplacements`, never by the recipe's text.
+ *
+ * @param {Recipe} recipe
+ * @param {string} configPath
+ * @returns {{ level: "warning", message: string }[]}
+ */
+export function removedProfileWarnings(recipe, configPath) {
+  const removed = Object.entries(removedProfileReplacements).find(
+    ([profile]) => profile === recipe.profile,
+  );
+  if (removed === undefined) {
+    return [];
+  }
+
+  const [profile, replacement] = removed;
+  return [
+    {
+      level: "warning",
+      message: `${configPath} names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to ${replacement} in ${configPath}; apply refuses the recipe until you do.`,
+    },
+  ];
+}
+
+/**
+ * One warning for each integration id a recipe selects that the catalog does not hold, in any
+ * project (#1082): apply's recipe validation refuses such a recipe whatever the Vite+ status. A
+ * removed toolchain id that the #431 warning already covers gets no second warning. A removed id
+ * is named by its catalog entry, with the ADR that removed it and ADR-0009's advice for a project
+ * without Vite+; any other id is text from the person's file, so the warning names its position in
+ * `integrations` instead of echoing it.
+ *
+ * @param {Recipe} recipe
+ * @param {VitePlusDetection} detection
+ * @param {string} configPath
+ * @returns {{ level: "warning", message: string }[]}
+ */
+export function unknownIntegrationWarnings(recipe, detection, configPath) {
+  const covered = new Set(
+    vitePlusRemovedToolchainSelections(recipe, detection).map(({ id }) => id),
+  );
+  const known = new Set(integrationCatalog.map(({ id }) => id));
+  /** @type {Set<string>} */
+  const seen = new Set();
+  /** @type {{ level: "warning", message: string }[]} */
+  const warnings = [];
+
+  for (const [index, id] of (recipe.integrations ?? []).entries()) {
+    if (known.has(id) || covered.has(id) || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+
+    const removed = removedToolchainIntegrations.find((integration) => integration.id === id);
+    warnings.push({
+      level: "warning",
+      message: removed
+        ? `${configPath} selects ${removed.id}, a JavaScript and TypeScript ${removed.provides} integration that Calavera removed (${removed.adr}). Vite+ provides ${removed.provides}, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove ${removed.id} from ${configPath}; apply refuses the recipe until you do.`
+        : `${configPath} integrations[${index}] is not an integration Calavera knows, so remove it from ${configPath}; apply refuses the recipe until you do.`,
     });
   }
+
+  return warnings;
+}
+
+/**
+ * Checks the project in the current directory against the recipe at `options.config`. It writes
+ * nothing and prompts for nothing, so tests call it in-process (#1148); the CLI prints the result
+ * and sets the exit code. It reads the project phase from `deriveProjectPhase`, as artifacts doctor
+ * does, so the two doctors agree about every artifact and about the phase (ADR-0020, Decision 5).
+ * Classifying the managed files loads the project's formatter as apply does, which runs the
+ * project's `vp fmt` in a Vite+ project without writing anything.
+ *
+ * Only a record the phase function or doctor cannot read, parse, or resolve stops doctor before it
+ * classifies (ADR-0020, Decision 7 and Amendment 1): the result then has no `phase`. Every other
+ * problem, such as a `package.json` that cannot be parsed in a workspace member, is a finding, and
+ * doctor goes on.
+ *
+ * @param {Pick<CliOptions, "config" | "packageManager">} options
+ * @param {import("./artifact-lifecycle.js").ArtifactServices} [services] The registry client the
+ *   phase function reads the artifact cache with, offline; tests pass a stand-in.
+ * @returns {Promise<DoctorResult>}
+ */
+export async function doctor(options, services = {}) {
+  const hasConfig = await fileExists(options.config);
+  const hasPackageJSON = await fileExists("package.json");
+  /** @type {DoctorIssue[]} */
+  const issues = [];
+  /** @type {DoctorIssue[]} */
+  const recipeIssues = [];
+  /** @type {DoctorIssue[]} */
+  const laterIssues = [];
+  /** @param {unknown} error @returns {DoctorResult} */
+  const stop = (error) => {
+    // #1141 and #1206: a recipe or record doctor cannot read, parse, or resolve is an error issue
+    // that stops doctor before it classifies, so `doctor --json` still prints a result for a CI
+    // step to parse (ADR-0020 Amendment 1). The issue keeps the issues found before it and the
+    // error's causes; a JSONParseError names the file and position without quoting it (#1157).
+    issues.push(...recipeIssues, ...laterIssues, {
+      level: "error",
+      message: errorText(error),
+      check: "records",
+    });
+    return { command: "doctor", ok: false, issues };
+  };
 
   if (!hasPackageJSON) {
     issues.push({
       level: "warning",
+      check: "project",
       message:
         "Missing package.json. apply creates one; when a manifest above this directory exists, apply asks whether to create one here, apply there, or stop.",
     });
   }
 
+  // The phase function checks for a pending transaction first and then reads no record, so doctor
+  // reads the state only without one.
+  const pending = await fileExists(EJECT_TRANSACTION_PATH);
+
+  /** @type {Recipe | undefined} */
+  let recipe;
+  /** @type {string | undefined} */
+  let rootForRemedy;
   if (hasConfig) {
-    const recipe = await readRecipe(options.config);
-    const integrations = resolveRecipeIntegrations(recipe);
-    const aiArtifacts = resolveAiArtifacts(recipe);
-    // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
-    // repository root, so doctor run from a workspace member checks them there (#925).
-    const rootOnlyIds = new Set(
-      integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
-    );
     const projectDirectory = process.cwd();
-    const repositoryRoot =
-      rootOnlyIds.size > 0
-        ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
-        : projectDirectory;
-
-    // #997: apply refuses a root-only integration outside the repository root, so doctor reports
-    // apply's own refusal, naming the package manager apply would name. package.json is read only
-    // here, so a recipe without a root-only integration is checked as before.
-    if (repositoryRoot !== projectDirectory) {
-      const rootOnlyRefusal = rootOnlyIntegrationRefusal(
-        integrations,
-        projectDirectory,
-        resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent()),
+    try {
+      // Doctor reads and resolves the recipe with its own readers before the phase function does,
+      // so an unreadable recipe stops it with the error it has always given (ADR-0020, Decision 7).
+      recipe = await readRecipe(options.config);
+      const detection = await detectVitePlus(projectDirectory);
+      /** @param {DoctorIssue["check"]} check @returns {(issue: { level: "error" | "warning", message: string }) => DoctorIssue} */
+      const withCheck = (check) => (issue) => ({ ...issue, check });
+      recipeIssues.push(
+        // apply's validation checks the profile before the integrations, so doctor lists it first.
+        ...removedProfileWarnings(recipe, options.config).map(withCheck("recipe")),
+        ...removedToolchainWarnings(recipe, detection, options.config).map(withCheck("recipe")),
+        ...unknownIntegrationWarnings(recipe, detection, options.config).map(withCheck("recipe")),
       );
-      if (rootOnlyRefusal !== undefined) {
-        issues.push({ level: "error", message: rootOnlyRefusal });
+      // #1140: right after validating the recipe, apply refuses a legacy entry that selects an
+      // artifact with wiring or inputs (#1125), so doctor reports that refusal, with apply's
+      // entries and its `artifacts migrate` remedy, before the findings whose remedy is to run
+      // apply.
+      const legacyRefusal = legacyEntryWiringRefusal(
+        recipe.ai,
+        "apply stops before writing anything",
+      );
+      if (legacyRefusal !== undefined) {
+        recipeIssues.push({ level: "error", message: legacyRefusal, check: "recipe" });
       }
-    }
-
-    for (const { integration, path } of declaredManagedFiles(integrations.map(({ id }) => id))) {
-      const atRepositoryRoot = rootOnlyIds.has(integration) && repositoryRoot !== projectDirectory;
-      const file = atRepositoryRoot ? relative(projectDirectory, join(repositoryRoot, path)) : path;
-
-      if (!(await fileExists(file))) {
-        issues.push({
-          level: "warning",
-          message: atRepositoryRoot
-            ? `Missing managed file: ${file}. Run create-project-calavera apply from the repository root, ${repositoryRoot}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`
-            : `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
-        });
-      }
-    }
-
-    if (
-      integrations.some((integration) => integration.id === "varlock") &&
-      !(await fileExists(".env.schema"))
-    ) {
-      issues.push({
-        level: "warning",
-        message:
-          "Missing Varlock schema: .env.schema. Run create-project-calavera apply to scaffold it.",
-      });
-    }
-
-    for (const artifact of aiArtifacts) {
-      // A packaged artifact's payload comes from the lock and .calavera/packages, not from its
-      // legacy source path, which no project holds; `artifacts status` checks the lock.
-      if (!artifactForId(artifact.source)) {
-        await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
-      }
-
-      for (const path of aiArtifactOutputPaths(artifact)) {
-        if (!(await fileExists(path))) {
-          issues.push({
-            level: "warning",
-            message: `Missing managed AI ${artifact.type}: ${path}. Run create-project-calavera apply to regenerate managed AI artifacts.`,
+      const integrations = resolveRecipeIntegrations(recipe);
+      const aiArtifacts = resolveAiArtifacts(recipe);
+      // A root-only integration (catalog `appliesAt: "repository-root"`) and an artifact that
+      // writes Git hooks apply at the repository root, so doctor run from a workspace member
+      // reports apply's refusals (#925, #997, #1031). The phase function classifies the root-only
+      // integration's files at the repository root.
+      const rootOnly = integrations.some(({ appliesAt }) => appliesAt === "repository-root");
+      const gitHookIds = gitHookArtifactIds(recipe);
+      const repositoryRoot =
+        rootOnly || gitHookIds.length > 0
+          ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
+          : projectDirectory;
+      if (repositoryRoot !== projectDirectory) {
+        rootForRemedy = repositoryRoot;
+        // package.json is read only here. One that cannot be parsed is a finding, not a stop,
+        // because it is not one of the records Decision 7 names (the 2026-11-24 drift item on
+        // #1112), so doctor goes on to classify. resolveApplyPackageManager refuses a recipe
+        // packageManager that Calavera does not support, as apply does, and that still stops.
+        let packageJSON;
+        try {
+          packageJSON = await readPackageJSONIfPresent();
+        } catch (error) {
+          recipeIssues.push({
+            level: "error",
+            check: "repository-root",
+            message:
+              error instanceof JSONParseError
+                ? `${error.message} doctor needs it to tell which package manager apply names for a root-only integration or an artifact that writes Git hooks.`
+                : `package.json cannot be read (${/** @type {NodeJS.ErrnoException} */ (error).code ?? "an error without a code"}), so doctor cannot tell which package manager apply names for a root-only integration or an artifact that writes Git hooks.`,
           });
         }
+        if (packageJSON !== undefined) {
+          const packageManager = resolveApplyPackageManager(recipe, options, packageJSON);
+          // apply stops at the first refusal; doctor reports both, so one run names every change
+          // the recipe needs.
+          for (const refusal of [
+            rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
+            gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),
+          ]) {
+            if (refusal !== undefined) {
+              recipeIssues.push({ level: "error", message: refusal, check: "repository-root" });
+            }
+          }
+        }
       }
-    }
 
-    // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded.
-    const state = await readStateIfPresent();
-    issues.push(
-      ...(await artifactWiringFindings({
-        records: state.aiWiring,
-        selected: new Set(aiArtifacts.map(({ source }) => source)),
-        skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
-      })),
-    );
+      // While a transaction is pending, doctor reads no record, file, or wiring, because the
+      // rollback may still change them (owner decision 20).
+      if (!pending) {
+        if (
+          integrations.some((integration) => integration.id === "varlock") &&
+          !(await fileExists(VARLOCK_SCHEMA_PATH))
+        ) {
+          laterIssues.push({
+            level: "warning",
+            check: "managed-file",
+            message: `Missing Varlock schema: ${VARLOCK_SCHEMA_PATH}. Run create-project-calavera apply to scaffold it.`,
+          });
+        }
+
+        // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded, in the
+        // words doctor has always used, remedies included (ADR-0020, Decision 4). An unreadable
+        // state stops doctor here with its own error, before the phase function reads the state.
+        // Each record is checked on its own, so each finding names the artifact it prints under.
+        const selectedAiIds = new Set(aiArtifacts.map(({ id }) => id));
+        const state = await readStateIfPresent().catch((error) => {
+          throw new Error(`doctor cannot use ${STATE_FILE}.`, { cause: error });
+        });
+        for (const record of state.aiWiring) {
+          for (const { level, message, detail } of await artifactWiringFindings({
+            records: [record],
+            selected: selectedAiIds,
+            skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+          })) {
+            laterIssues.push({
+              level,
+              message,
+              check: "wiring",
+              artifact: record.artifact,
+              detail,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      // ADR-0020, Decisions 1 and 5: a pending transaction wins over every other finding,
+      // including a recipe doctor cannot read, parse, or resolve, so that recipe is then a finding
+      // and both doctors report the phase pending-transaction.
+      if (!pending) return stop(error);
+      recipeIssues.push({ level: "error", message: errorText(error), check: "recipe" });
+    }
   }
 
+  let phase;
+  try {
+    phase = await deriveProjectPhase({
+      config: options.config,
+      registry: artifactRegistry(services),
+    });
+  } catch (error) {
+    return stop(error);
+  }
+
+  const pendingMessage = pending
+    ? (await pendingTransactionRemedy(options.config, "doctor", phase.rollbackFiles))
+        .phaseLineMessage
+    : undefined;
+  const { phaseLine, issues: fromPhase } = phaseIssues(phase, {
+    recipe,
+    config: options.config,
+    pendingMessage,
+    repositoryRoot: rootForRemedy,
+  });
+  const [phaseIssue, ...items] = fromPhase;
+  const allIssues = [
+    /** @type {DoctorIssue} */ (phaseIssue),
+    ...issues,
+    ...recipeIssues,
+    ...items,
+    ...laterIssues,
+  ];
   return {
     command: "doctor",
-    ok: issues.every((issue) => issue.level !== "error"),
-    issues,
+    ok: allIssues.every(({ level }) => level !== "error"),
+    phase: phase.phase,
+    phaseLine,
+    issues: allIssues,
+    artifacts: phase.artifacts.map(({ id, selected, condition, unrecordedFiles }) => ({
+      id,
+      selected,
+      condition,
+      unrecordedFiles: unrecordedFileEntries(id, unrecordedFiles, recipe, options.config),
+    })),
+    managedFiles: phase.managedFiles.map(({ path, integration, condition }) => ({
+      path,
+      integration,
+      selected: true,
+      condition,
+    })),
+    ...(pending ? { rollbackFiles: phase.rollbackFiles } : {}),
   };
 }
 
@@ -5834,8 +6084,17 @@ async function clean(options) {
     : { integrations: [] };
   const integrations = resolveRecipeIntegrations(recipe);
   const selectedAiArtifacts = resolveAiArtifacts(recipe);
-  const expectedAiPaths = new Set(selectedAiArtifacts.flatMap(aiArtifactOutputPaths));
-  const selectedAiIds = new Set(selectedAiArtifacts.map(({ source }) => source));
+  // #1007: the base skill in `.agents/skills/calavera` is never stale, whether `--init` or a recipe
+  // installed it, because it is Calavera's own artifact whatever the recipe selects (ADR-0017,
+  // Decision 2). Only `eject` removes it.
+  const expectedAiPaths = new Set(
+    [...selectedAiArtifacts, ...resolveAiArtifacts(AGENT_BOOTSTRAP_SKILL_RECIPE)].flatMap(
+      aiArtifactOutputPaths,
+    ),
+  );
+  // #1119: by catalog ID, as apply records wiring, so a legacy entry that still selects a wired
+  // artifact keeps that artifact's wiring and its state record, as doctor reads them (#1101).
+  const selectedAiIds = new Set(selectedAiArtifacts.map(({ id }) => id));
   // #795: the files apply writes for this recipe, from apply's own planner, so a file that an
   // integration the recipe still selects writes is never stale. A separate list of file names
   // missed the github-repository-controls files, so clean would have deleted them.
@@ -5938,6 +6197,13 @@ async function clean(options) {
     staleAiArtifactsSafeToRemove.push(artifact);
   }
 
+  // #331: one builder for both returns below, so a kept artifact carries its category, type, and
+  // name whether or not clean also removes something.
+  const { files: keptFiles, artifacts: keptArtifacts } = cleanSkipChanges(
+    staleFilesWithLocalEdits,
+    staleAiArtifactsWithLocalEdits,
+  );
+
   if (
     staleFilesSafeToRemove.length === 0 &&
     staleAiArtifactsSafeToRemove.length === 0 &&
@@ -5946,24 +6212,18 @@ async function clean(options) {
     return {
       command: "clean",
       wiringChanges: [],
-      changes: [
-        ...staleFilesWithLocalEdits.map(({ path, reason, skipReasons }) => ({
-          type: "skip",
-          path,
-          reason,
-          skipReasons,
-        })),
-        ...staleAiArtifactsWithLocalEdits.map(({ path, reason, skipReasons }) => ({
-          type: "skip",
-          path,
-          reason,
-          skipReasons,
-        })),
-      ],
-      message:
-        staleFilesWithLocalEdits.length > 0 || staleAiArtifactsWithLocalEdits.length > 0
-          ? `No stale managed items were safe to remove. ${keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits])}`
-          : "No stale managed files found.",
+      changes: [...keptFiles, ...keptArtifacts],
+      message: [
+        cleanHeadline({
+          dryRun: options.dryRun,
+          removed: 0,
+          wiringFiles: 0,
+          kept: staleFilesWithLocalEdits.length + staleAiArtifactsWithLocalEdits.length,
+        }),
+        keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits]),
+      ]
+        .filter(isNotEmptyString)
+        .join(" "),
     };
   }
 
@@ -6021,12 +6281,7 @@ async function clean(options) {
       ownership: /** @type {const} */ ("project"),
     })),
     ...staleFilesSafeToRemove.map((file) => ({ type: "delete", path: file.path })),
-    ...staleFilesWithLocalEdits.map(({ path, reason, skipReasons }) => ({
-      type: "skip",
-      path,
-      reason,
-      skipReasons,
-    })),
+    ...keptFiles,
     ...staleAiArtifactsSafeToRemove.map((artifact) => ({
       type: "delete",
       path: artifact.path,
@@ -6034,15 +6289,7 @@ async function clean(options) {
       aiType: artifact.type,
       name: artifact.name,
     })),
-    ...staleAiArtifactsWithLocalEdits.map((artifact) => ({
-      type: "skip",
-      path: artifact.path,
-      category: "ai",
-      aiType: artifact.type,
-      name: artifact.name,
-      reason: artifact.reason,
-      skipReasons: artifact.skipReasons,
-    })),
+    ...keptArtifacts,
   ];
   const kept = keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits]);
 
@@ -6072,17 +6319,395 @@ async function clean(options) {
     changes,
     wiringChanges: wiringPlan.changes,
     message: [
-      options.dryRun
-        ? "Dry run complete. No files were removed."
-        : staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length === 0
-          ? "Removed the wiring of artifacts the recipe no longer selects."
-          : changedWiringFiles.length === 0
-            ? "Removed stale managed files."
-            : "Removed stale managed files and the wiring of artifacts the recipe no longer selects.",
+      cleanHeadline({
+        dryRun: options.dryRun,
+        removed: staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length,
+        wiringFiles: changedWiringFiles.length,
+        kept: staleFilesWithLocalEdits.length + staleAiArtifactsWithLocalEdits.length,
+      }),
       kept,
     ]
       .filter(isNotEmptyString)
       .join(" "),
+  };
+}
+
+/**
+ * The start of an eject summary when eject first finished an artifact transaction that an earlier
+ * command left pending, so the person knows what that change was.
+ */
+const EJECT_RECOVERED_PREFIX =
+  "eject recovered the pending artifact transaction first, as every artifacts command does. ";
+
+/**
+ * What the headline adds when a run plans the `ejected` block (ADR-0017, Amendment 5). It does not
+ * name `.gitignore`, because the list below names it once, under its heading.
+ */
+const EJECT_ADDS_BLOCK = " and then add the block that marks the project as ejected";
+const EJECT_ADDED_BLOCK = " and added the block that marks the project as ejected";
+
+/**
+ * `eject` (#678, ADR-0017): removes Calavera's footprint from the current directory and keeps the
+ * tooling it installed. The planner and the removal are in `eject.js`; this function chooses how
+ * the person approves the list. A dry run lists and changes nothing. An interactive run shows the
+ * list, with each item marked edited, unedited, or "edits cannot be detected", and removes
+ * nothing until the person approves all of it. A run that cannot ask refuses unless `--yes` is
+ * given, and `--yes` removes only the items that match Calavera's records exactly (Decision 5).
+ * Every run also reports what it keeps for the person: footprint text it does not remove, the
+ * `package.json` scripts and development dependency that call Calavera, and a footprint elsewhere
+ * in the workspace.
+ *
+ * @param {CliOptions} options
+ * @param {EjectRuntime} [runtime]
+ * @returns {Promise<EjectResult>}
+ */
+export async function ejectProject(options, runtime = {}) {
+  const interactive = runtime.interactive ?? canPrompt(options);
+  const refuse = !options.dryRun && !options.assumeYes && !interactive;
+  assertEjectConfig(options.config);
+  const packageJSON = await readEjectPackageJSON();
+  const pendingTransaction = await fileExists(EJECT_TRANSACTION_PATH);
+  /** @param {EjectResult["status"]} status @param {string} message @param {EjectResultItem[]} items @param {Pick<EjectResult, "reported" | "kept" | "ejectedBlock">} [found] */
+  const result = async (status, message, items, found = { reported: [], kept: [] }) => ({
+    command: /** @type {const} */ ("eject"),
+    dryRun: options.dryRun,
+    status,
+    message,
+    items,
+    ...found,
+    packageJson: await ejectPackageJsonReport(packageJSON),
+    elsewhere: await ejectFootprintElsewhere(packageJSON.manifest),
+  });
+
+  // A refused run writes nothing, so it cannot recover a pending artifact transaction, and
+  // without that recovery it cannot list the footprint (Decision 7).
+  if (refuse && pendingTransaction) {
+    return result(
+      "refused",
+      `${ejectRefusal(options)} ${EJECT_TRANSACTION_PATH} also records a pending artifact transaction, which eject recovers before it lists anything; a run in a terminal or with --yes recovers it first.`,
+      [],
+    );
+  }
+
+  const loadFormatter = projectFormatterLoader(process.cwd());
+  const guidance = await agentBootstrapTexts(loadFormatter);
+  // A refused run plans as a dry run, so it writes nothing.
+  const plan = await planEject({
+    dryRun: options.dryRun || refuse,
+    config: options.config,
+    guidance,
+    loadFormatter,
+  });
+  /**
+   * The `ejected` block as the result shows it.
+   *
+   * @param {import("./eject.js").EjectedBlockPlan} block
+   * @param {EjectedBlockResult["outcome"]} outcome
+   * @param {string} [error]
+   * @returns {EjectedBlockResult}
+   */
+  const describeBlock = ({ path, type, lines }, outcome, error) => ({
+    path,
+    type,
+    lines,
+    outcome,
+    ...(error === undefined ? {} : { error }),
+  });
+  const found = {
+    reported: plan.reported,
+    kept: plan.kept,
+    ...(plan.ejectedBlock === undefined
+      ? {}
+      : { ejectedBlock: describeBlock(plan.ejectedBlock, "planned") }),
+  };
+  const addsBlock = plan.ejectedBlock === undefined ? "" : EJECT_ADDS_BLOCK;
+  // What --yes would do, so the list the person sees says it: the items it leaves for an
+  // approval, and the records it keeps while one of those items needs them (Decision 5).
+  const yesLeaves = new Set(selectEjectItems(plan, { assumeYes: true }).leave);
+  /**
+   * The item as the result shows it, without the check values, which hold whole file texts.
+   *
+   * @param {import("./eject.js").EjectItem} item
+   * @param {EjectResultItem["outcome"]} outcome
+   * @param {string} [error]
+   * @returns {EjectResultItem}
+   */
+  const describe = (item, outcome, error) => {
+    // An MCP entry's text afterward can hold the person's other servers and their tokens, so it
+    // stays internal and the result shows `around` (ADR-0017, Amendment 3).
+    const { seen: _seen, ...visible } = item;
+    if (item.kind === "mcp-entry") delete visible.contents;
+    return {
+      ...visible,
+      outcome,
+      ...(error === undefined ? {} : { error }),
+      ...((outcome === "planned" || outcome === "left") &&
+      item.matchesRecords &&
+      yesLeaves.has(item)
+        ? { keptRecord: true }
+        : {}),
+    };
+  };
+  const planned = plan.items.map((item) => describe(item, "planned"));
+  const listed = `eject would remove ${pluralizeCount(plan.items.length, "item")}${addsBlock}${yesSummary(
+    plan.items.filter((item) => yesLeaves.has(item)),
+    false,
+  )}.`;
+  const recovered = pendingTransaction && !options.dryRun;
+
+  if (plan.nothingToDo) {
+    return result(
+      "nothing-to-do",
+      `${recovered ? EJECT_RECOVERED_PREFIX : ""}eject found no Calavera footprint to remove here.`,
+      [],
+      found,
+    );
+  }
+
+  if (options.dryRun) {
+    return result("dry-run", `Dry run complete. Nothing was changed. ${listed}`, planned, found);
+  }
+
+  if (refuse) {
+    return result("refused", ejectRefusal(options), planned, found);
+  }
+
+  if (!options.assumeYes) {
+    const show =
+      runtime.show ??
+      ((lines) => {
+        for (const { text } of lines) logger.info(text);
+      });
+    // The same list the dry run prints, so the approval covers exactly what it names.
+    show(ejectSummaryLines(await result("dry-run", listed, planned, found)));
+    const ask =
+      runtime.confirm ??
+      (async (message) => {
+        const answer = await confirm({ message });
+        return answer === true && !isCancel(answer);
+      });
+    const approved = await ask(
+      `Remove the ${pluralizeCount(plan.items.length, "item")} listed above, including any marked edited${plan.ejectedBlock === undefined ? "" : EJECT_ADDS_BLOCK.replace(" and then", ", and")}?`,
+    );
+    if (!approved) {
+      return result(
+        "cancelled",
+        recovered
+          ? "eject cancelled. It recovered the pending artifact transaction first, as every artifacts command does, and changed nothing else."
+          : "eject cancelled. Nothing was changed.",
+        planned,
+        found,
+      );
+    }
+  }
+
+  const { remove, leave, ejectedBlock } = selectEjectItems(plan, {
+    assumeYes: options.assumeYes,
+  });
+  const outcome = await executeEject(remove, ejectedBlock);
+  /** @type {Map<import("./eject.js").EjectItem, EjectResultItem>} */
+  const done = new Map();
+  for (const item of outcome.removed) done.set(item, describe(item, "removed"));
+  for (const { item, error } of outcome.failed)
+    done.set(item, describe(item, "failed", error.message));
+  for (const { item, reason } of outcome.skipped) done.set(item, describe(item, "skipped", reason));
+  for (const item of leave) done.set(item, describe(item, "left"));
+  const items = plan.items.flatMap((item) => done.get(item) ?? []);
+  const blockOutcome = outcome.ejectedBlock;
+  const block =
+    plan.ejectedBlock === undefined
+      ? undefined
+      : blockOutcome === undefined
+        ? describeBlock(plan.ejectedBlock, "left")
+        : blockOutcome === "written"
+          ? describeBlock(plan.ejectedBlock, "written")
+          : "error" in blockOutcome
+            ? describeBlock(plan.ejectedBlock, "failed", ejectedBlockError(blockOutcome.error))
+            : describeBlock(plan.ejectedBlock, "skipped", blockOutcome.reason);
+  const finished = { ...found, ...(block === undefined ? {} : { ejectedBlock: block }) };
+  const notRemoved = outcome.failed.length + outcome.skipped.length;
+  const blockNotAdded = block?.outcome === "failed" || block?.outcome === "skipped";
+  const removed = `${recovered ? EJECT_RECOVERED_PREFIX : ""}Removed ${pluralizeCount(outcome.removed.length, "item")}${block?.outcome === "written" ? EJECT_ADDED_BLOCK : ""}${yesSummary(leave, true)}.`;
+  const approveLeft =
+    leave.length > 0 ? " Run eject in a terminal to review and approve what is left." : "";
+  if (notRemoved > 0 || blockNotAdded) {
+    const problems = [
+      notRemoved > 0 ? `${pluralizeCount(notRemoved, "item")} could not be removed` : "",
+      blockNotAdded ? "eject could not add the ejected block" : "",
+    ]
+      .filter(isNotEmptyString)
+      .join(", and ");
+    return result(
+      "failed",
+      `${removed} ${problems}; each one says why below. Fix the cause, then run eject again.${approveLeft}`,
+      items,
+      finished,
+    );
+  }
+  return result("ejected", `${removed}${approveLeft}`, items, finished);
+}
+
+/**
+ * Why the `ejected` block could not be written, in words. A file system error is named by its
+ * system call and code, because its message repeats the path the block's entry already names;
+ * any other error, such as a `.gitignore` that changed since the list, keeps its own words.
+ *
+ * @param {Error} error
+ */
+function ejectedBlockError(error) {
+  const { code, syscall } = /** @type {NodeJS.ErrnoException} */ (error);
+  return typeof code === "string"
+    ? `the file system refused it (${syscall ?? "unknown call"}, ${code}).`
+    : error.message;
+}
+
+/**
+ * What `--yes` leaves, in words: the items that need an approval, and the records it keeps while
+ * one of them needs them. Empty when it leaves nothing. A kept record never comes without an item
+ * that needs an approval, because only such an item needs a record.
+ *
+ * @param {import("./eject.js").EjectItem[]} leave From `selectEjectItems` with `assumeYes`.
+ * @param {boolean} done Whether `--yes` has run, so the words are in the past tense.
+ */
+function yesSummary(leave, done) {
+  if (leave.length === 0) return "";
+  const approvals = leave.filter(({ matchesRecords }) => !matchesRecords).length;
+  const records = leave.length - approvals;
+  const [leaves, keeps, left] = done
+    ? ["left", "kept", "left"]
+    : ["would leave", "would keep", "leaves"];
+  const needing = approvals === 1 ? `the item it ${left} needs` : `the items it ${left} need`;
+  return `; --yes ${leaves} ${pluralizeCount(approvals, "item")} for an interactive approval${records > 0 ? `, and ${keeps} ${pluralizeCount(records, "record")} that ${needing}` : ""}`;
+}
+
+/**
+ * The project's `package.json`, which `eject` only reads for its reports. A file that cannot be
+ * read stops nothing, because `eject` never writes it; the report says why it is missing.
+ *
+ * @returns {Promise<{ manifest: PackageJSON, problem?: string }>}
+ */
+async function readEjectPackageJSON() {
+  try {
+    const manifest = await readPackageJSONIfPresent();
+    return isPlainObject(manifest)
+      ? { manifest }
+      : { manifest: {}, problem: "package.json does not hold a JSON object" };
+  } catch (error) {
+    return {
+      manifest: {},
+      problem: `package.json could not be read (${error instanceof Error ? error.message : String(error)})`,
+    };
+  }
+}
+
+/**
+ * Why `eject` refuses a run that cannot ask, and how to go on.
+ *
+ * @param {CliOptions} options
+ */
+function ejectRefusal(options) {
+  const reasons = [
+    ...(options.json ? ["--json is set"] : []),
+    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+  ];
+  return `eject cannot ask for confirmation because ${reasons.length > 0 ? reasons.join(" and ") : "it is not running interactively"}, so it changed nothing. Run eject in a terminal to review and approve the list, or pass --yes to remove only the items that match Calavera's records exactly.`;
+}
+
+/**
+ * The scripts in `package.json` that run Calavera, and the `create-project-calavera` development
+ * dependency with the command that removes it for the project's package manager, or `vp remove`
+ * when Vite+ manages the project. `eject` reports them and never writes `package.json` (ADR-0017,
+ * Decision 4).
+ *
+ * @param {{ manifest: PackageJSON, problem?: string }} read From `readEjectPackageJSON`.
+ * @returns {Promise<EjectResult["packageJson"]>}
+ */
+async function ejectPackageJsonReport({ manifest: packageJSON, problem }) {
+  if (problem !== undefined) {
+    return {
+      scripts: [],
+      problem: `${problem}, so eject cannot report the scripts or the development dependency that call Calavera, or name a footprint in the workspace packages it lists. eject never changes package.json; fix it and run eject again to see them.`,
+    };
+  }
+  const scripts = Object.entries(packageJSON.scripts ?? {}).flatMap(([name, value]) =>
+    typeof value === "string" && scriptRunsCalavera(value) ? [{ name, value }] : [],
+  );
+  const devDependencies = isPlainObject(packageJSON.devDependencies)
+    ? packageJSON.devDependencies
+    : {};
+  const name = packageJson.name;
+  if (!Object.hasOwn(devDependencies, name)) {
+    return { scripts };
+  }
+  const packageManager = detectPackageManager(packageJSON) ?? "npm";
+  const command = devDependencyRemoveCommand(packageManager, await detectVitePlus(process.cwd()), [
+    name,
+  ]);
+  return { scripts, devDependency: { name, removeCommand: formatCommand(command) } };
+}
+
+/**
+ * The footprint in other directories of the workspace, which `eject` names so the person can run
+ * it there too (ADR-0017, Decision 8): at the repository root, when `eject` runs below it, and in
+ * each workspace package, when it runs at a workspace root.
+ *
+ * @param {PackageJSON} packageJSON
+ * @returns {Promise<EjectResult["elsewhere"]>}
+ */
+async function ejectFootprintElsewhere(packageJSON) {
+  const directory = process.cwd();
+  /** @type {string[]} */
+  const locations = [];
+  const repositoryRoot = findRepositoryRoot(directory);
+  if (repositoryRoot !== undefined) locations.push(repositoryRoot);
+  const patterns =
+    (await workspacePackagePatterns(directory, packageJSON, "pnpm")) ??
+    (await workspacePackagePatterns(directory, packageJSON, "npm"));
+  if (patterns) {
+    /** @type {string[]} */
+    const members = [];
+    for await (const manifestPath of workspaceMemberManifests(directory, patterns)) {
+      members.push(join(directory, dirname(manifestPath)));
+    }
+    locations.push(...members.sort());
+  }
+  /** @type {EjectResult["elsewhere"]} */
+  const elsewhere = [];
+  // A workspace that lists `.` among its packages, or a root met twice, is not elsewhere.
+  for (const location of new Set(locations)) {
+    if (location === directory) continue;
+    const paths = await footprintIn(location);
+    if (paths.length > 0) {
+      elsewhere.push({ directory: relative(directory, location).split(sep).join("/"), paths });
+    }
+  }
+  return elsewhere;
+}
+
+/**
+ * The skip changes for the stale managed files and artifacts clean keeps, each with its reason.
+ *
+ * @param {Array<{ path: string, reason: string, skipReasons: CleanSkipReason[] }>} files
+ * @param {Array<AiArtifactState & { reason: string, skipReasons: CleanSkipReason[] }>} artifacts
+ * @returns {{ files: Change[], artifacts: Change[] }}
+ */
+function cleanSkipChanges(files, artifacts) {
+  return {
+    files: files.map(({ path, reason, skipReasons }) => ({
+      type: "skip",
+      path,
+      reason,
+      skipReasons,
+    })),
+    artifacts: artifacts.map(({ path, type, name, reason, skipReasons }) => ({
+      type: "skip",
+      path,
+      category: "ai",
+      aiType: type,
+      name,
+      reason,
+      skipReasons,
+    })),
   };
 }
 
@@ -6092,9 +6717,10 @@ const KEEP_YOUR_VERSION =
 
 /**
  * For each reason clean keeps a stale item, the words for the summary: why, for one item and for
- * several, then what to do. Each kept item's own `reason` names the exact file, link, or hash.
+ * several, then what to do. `several` is left out where the words for one item fit several too.
+ * Each kept item's own `reason` names the exact file, link, or hash.
  *
- * @type {Record<CleanSkipReason, { one: string, several: string, action: string }>}
+ * @type {Record<CleanSkipReason, { one: string, several?: string, action: string }>}
  */
 const KEPT_SUMMARY = {
   "local-edits": {
@@ -6116,7 +6742,6 @@ const KEPT_SUMMARY = {
   },
   "unfollowable-link": {
     one: "a hook is a symbolic link that Calavera cannot follow",
-    several: "a hook is a symbolic link that Calavera cannot follow",
     action: "Repair or remove the links each item's reason names, then run clean again.",
   },
   unreadable: {
@@ -6139,7 +6764,7 @@ function keptSummary(keptItems) {
         .filter(({ skipReasons }) => skipReasons.includes(/** @type {CleanSkipReason} */ (code)))
         .map(({ path }) => path);
       if (paths.length === 0) return "";
-      return `Kept ${paths.join(", ")}, because ${paths.length === 1 ? one : several}. ${action}`;
+      return `Kept ${paths.join(", ")}, because ${paths.length === 1 ? one : (several ?? one)}. ${action}`;
     })
     .filter(isNotEmptyString)
     .join(" ");
@@ -6182,7 +6807,7 @@ function keptBecauseOfWiring(artifactPath, { mentions, unresolved, unreadable })
   return { reason: sentences.join(" "), skipReasons };
 }
 
-function formatHelp() {
+export function formatHelp() {
   return `create-project-calavera ${packageJson.version}
 
 Usage:
@@ -6196,6 +6821,7 @@ Commands:
   doctor               Check whether Calavera-managed files are present
   update               Re-apply the recipe in calavera.config.json
   clean                Remove stale Calavera-managed files and wiring when safe
+  eject                Remove Calavera's own files and keep the tooling it installed
   artifacts install    Install exact package-backed artifact selections
   artifacts status     Inspect locked artifacts offline by default
   artifacts doctor     Check installed artifacts and local edits
@@ -6211,7 +6837,7 @@ Options:
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
                        Before --new: copy this recipe into the new project
-                       With apply: copy a recipe from outside the project into it
+                       With apply or update: copy a recipe from outside the project into it
   --package-manager    npm, pnpm, yarn, or bun
   --profile            default or minimal; --yes without it uses default
   --tool <id>          Add an integration by id or label; repeatable
@@ -6222,10 +6848,12 @@ Options:
   --agents-md <mode>   append or fallback when AGENTS.md already exists
   --mcp-harness <host> claude-code, codex, cursor, opencode, or skip
   --json               Print JSON output
-  --yes                Use defaults and skip prompts
+  --yes                Use defaults and skip prompts; with eject, remove only the
+                       items that match Calavera's records exactly
   --no-install         Write files without installing dependencies during apply
   --reown-managed-file <path>
-                      Treat a tracked managed file's current contents as approved
+                       Replace an edited, tracked managed file's contents with
+                       Calavera's; the edits are lost unless you save a copy first
   --manifest-choice <choice>
                       Without a package.json here but with one above: create-here,
                       apply-at-ancestor, or abandon
@@ -6242,10 +6870,11 @@ MCP-first workflow:
   2. Choose exactly one project-local MCP host when prompted, or skip for manual setup.
   3. Reload or restart the agent session if required by your MCP host.
   4. Confirm these tools are visible before composing a recipe:
-     inspect_project, list_profiles, list_integrations, describe_integration,
-     list_ai_artifacts, list_baseline_targets, describe_baseline_target,
-     search_baseline_features, recommend_baseline_target, compose_recipe,
-     validate_recipe, explain_recipe, dry_run_apply, apply_recipe.
+     inspect_project, artifact_status, list_profiles, list_integrations,
+     describe_integration, list_ai_artifacts, list_baseline_targets,
+     describe_baseline_target, search_baseline_features,
+     recommend_baseline_target, compose_recipe, validate_recipe,
+     explain_recipe, dry_run_apply, apply_recipe.
 
 Package-runner syntax:
   npm create needs -- before Calavera flags, for example:
@@ -6267,54 +6896,46 @@ function printHelp() {
 }
 
 /**
+ * Logs each summary line with the logger method its level names.
+ *
+ * @param {import("./summary-lines.js").SummaryLine[]} lines
+ */
+function printSummaryLines(lines) {
+  for (const { level, text } of lines) {
+    logger[level](text);
+  }
+}
+
+/**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
- * @param {boolean} [commandDryRun]
+ * @param {{ dryRun?: boolean, noInstall?: boolean }} [command] The options the command ran with,
+ * where its result does not record them.
  */
-function printResult(result, asJSON = false, commandDryRun = false) {
+function printResult(result, asJSON = false, { dryRun: commandDryRun = false, noInstall } = {}) {
   if (asJSON) {
     console.info(JSON.stringify(result, null, 2));
     return;
   }
 
   if (result.command === "doctor") {
-    if (result.issues.length === 0) {
-      logger.success("Calavera doctor found no issues.");
-      return;
-    }
-
-    for (const issue of result.issues) {
-      logger[issue.level === "error" ? "error" : "warn"](issue.message);
+    for (const { level, message } of doctorReportLines(result)) {
+      logger[level](message);
     }
     return;
   }
 
   if (result.command === "clean") {
-    const dryRun = result.dryRun ?? commandDryRun;
-    logger.info(result.message);
-
-    for (const change of result.wiringChanges) {
-      for (const line of dryRun
-        ? formatWiringChange(change)
-        : [`Removed the ${change.artifact} wiring from ${change.path}`]) {
-        logger.info(line);
-      }
+    for (const { text } of cleanSummaryLines(result, result.dryRun ?? commandDryRun)) {
+      logger.info(text);
     }
+    return;
+  }
 
-    for (const change of result.changes) {
-      if (change.type === "delete") {
-        logger.info(dryRun ? `Would remove ${change.path}` : `Removed ${change.path}`);
-      }
-
-      if (change.type === "skip") {
-        logger.info(
-          dryRun
-            ? `Would skip ${change.path}: ${change.reason}`
-            : `Skipped ${change.path}: ${change.reason}`,
-        );
-      }
+  if (result.command === "eject") {
+    for (const { text } of ejectSummaryLines(result)) {
+      logger.info(text);
     }
-
     return;
   }
 
@@ -6388,31 +7009,7 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "init") {
-    if (result.dryRun) {
-      logger.info(`Calavera recipe dry run complete. Would write ${result.config}.`);
-    } else {
-      logger.success(`Wrote ${result.config}.`);
-    }
-
-    logger.info(`Profile: ${result.recipe.profile}`);
-    logger.info(`Package manager: ${result.recipe.packageManager}`);
-    logger.info(`Integrations: ${(result.recipe.integrations ?? []).join(", ")}`);
-
-    if (Array.isArray(result.recipe.ai) && result.recipe.ai.length > 0) {
-      logger.info(`AI artifacts: ${result.recipe.ai.length}`);
-    }
-
-    if (result.applyDryRun && !result.applyResult) {
-      logger.info("Apply was previewed but not run.");
-    }
-
-    if (result.applyResult) {
-      logger.success("Calavera apply complete.");
-      for (const pointer of result.applyResult.pointers) {
-        logger.info(pointer);
-      }
-    }
-
+    printSummaryLines(initSummaryLines(result));
     return;
   }
 
@@ -6440,21 +7037,26 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "apply") {
-    for (const { level, text } of applySummaryLines(result)) {
-      logger[level](text);
-    }
+    printSummaryLines(applySummaryLines(result, { noInstall }));
     return;
   }
 
   if (result.command === "artifacts status" || result.command === "artifacts doctor") {
-    for (const { level, message } of formatArtifactStatus(
-      /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
-        /** @type {unknown} */ (result)
-      ),
-    )) {
+    const report = /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
+      /** @type {unknown} */ (result)
+    );
+    for (const { level, message } of [
+      ...formatPhaseReport(report),
+      ...formatArtifactStatus(report),
+    ]) {
       logger[level](message);
     }
     printArtifactCacheBlock(result);
+    if (result.command === "artifacts doctor") {
+      for (const { level, message } of artifactDoctorVerdict(report)) {
+        logger[level](message);
+      }
+    }
     return;
   }
 
@@ -6480,6 +7082,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     )) {
       logger.warn(warning);
     }
+
+    for (const warning of formatTemporaryFolderLeftovers(
+      /** @type {Parameters<typeof formatTemporaryFolderLeftovers>[0]} */ (
+        /** @type {unknown} */ (result)
+      ),
+    )) {
+      logger.warn(warning);
+    }
   }
 }
 
@@ -6493,7 +7103,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 function printArtifactCacheBlock(result) {
   if (result.dryRun) {
     for (const change of /** @type {IgnoreChange[]} */ (result.ignoreChanges ?? [])) {
-      if (change.type !== "unchanged") logger.info(formatIgnoreChange(change));
+      // No file line above it, so the line names the file (#1135).
+      if (change.type !== "unchanged") {
+        logger.info(ignoreChangeLine(change, true, { namePath: true }));
+      }
     }
   }
   for (const pointer of /** @type {string[]} */ (result.pointers ?? [])) {
@@ -6510,13 +7123,26 @@ function printArtifactCacheBlock(result) {
  * @returns {string | undefined}
  */
 function formatAgentBootstrapChange(change, dryRun) {
+  const line = formatAgentBootstrapChangeLine(change, dryRun);
+  return line === undefined || change.warning === undefined
+    ? line
+    : `${line} Warning: ${change.warning}`;
+}
+
+/**
+ * @param {Change} change
+ * @param {boolean} dryRun
+ * @returns {string | undefined}
+ */
+function formatAgentBootstrapChangeLine(change, dryRun) {
   switch (change.type) {
     case "write":
       return dryRun ? `Would write ${change.path}` : `Wrote ${change.path}`;
-    case "update":
-      return dryRun
-        ? `Would update ${change.path}: ${change.reason}`
-        : `Updated ${change.path}: ${change.reason}`;
+    case "update": {
+      // An update without a reason, such as the filters added to .coderabbit.yaml, has no colon.
+      const reason = change.reason === undefined ? "" : `: ${change.reason}`;
+      return `${dryRun ? "Would update" : "Updated"} ${change.path}${reason}`;
+    }
     case "skip":
       return dryRun
         ? `Would skip ${change.path}: ${change.reason}`
@@ -6526,59 +7152,213 @@ function formatAgentBootstrapChange(change, dryRun) {
   }
 }
 
-async function main() {
-  const options = parseArgs(args);
+/**
+ * `--init`, `agent-init`, and `bootstrap` run the same bootstrap.
+ *
+ * @param {CliOptions} options
+ */
+async function runAgentBootstrap(options) {
+  printResult(await agentBootstrap(options), options.json);
+}
 
-  if (options.command === "help") {
-    printHelp();
+/**
+ * What each command runs, and the `command` its result names, keyed by the command name `parseArgs`
+ * returns. A name missing here is an unknown command. The map has no prototype, so a name such as
+ * `toString` or `__proto__` cannot reach an inherited property and run it as a command.
+ *
+ * `result` is the name the command's success result uses, so an error result names the command the
+ * same way (#1227): `update` applies the recipe as apply does (#1025), `bootstrap` runs the
+ * agent-init bootstrap, and each artifacts action names its result `artifacts <action>`. `help`
+ * prints no result. A test runs a success and a failure of each command and requires the same name.
+ *
+ * @typedef {{ result: string | null | ((artifactAction: string | undefined) => string | null), run: (options: CliOptions) => Promise<void> }} CommandRunner
+ * @type {Record<string, CommandRunner>}
+ */
+const commandRunners = Object.assign(
+  Object.create(null),
+  /** @type {Record<string, CommandRunner>} */ ({
+    help: {
+      result: null,
+      run: async () => {
+        printHelp();
+      },
+    },
+    init: {
+      result: "init",
+      run: async (options) => {
+        printResult(await initRecipe(options), options.json);
+      },
+    },
+    "agent-init": { result: "agent-init", run: runAgentBootstrap },
+    bootstrap: { result: "agent-init", run: runAgentBootstrap },
+    new: {
+      result: "new",
+      run: async (options) => {
+        printResult(await newProject(options));
+      },
+    },
+    apply: {
+      result: "apply",
+      run: async (options) => {
+        printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
+      },
+    },
+    doctor: {
+      result: "doctor",
+      run: async (options) => {
+        const result = await doctor(options);
+        printResult(result, options.json);
+        // #1030: `ok` is false only when an issue has the level "error", so warnings stay advisory
+        // and a CI step that runs doctor fails only on an error.
+        if (!result.ok) {
+          process.exitCode = 1;
+        }
+      },
+    },
+    update: {
+      result: "apply",
+      run: async (options) => {
+        printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
+      },
+    },
+    clean: {
+      result: "clean",
+      run: async (options) => {
+        printResult(await clean(options), options.json, { dryRun: options.dryRun });
+      },
+    },
+    eject: {
+      result: "eject",
+      run: async (options) => {
+        const result = await ejectProject(options);
+        printResult(result, options.json);
+        // A refused run changed nothing, and a failed one left items, so neither succeeded.
+        if (result.status === "refused" || result.status === "failed") {
+          process.exitCode = 1;
+        }
+      },
+    },
+    artifacts: {
+      // An action Calavera does not have has no result to match, so it names no command, as an
+      // unknown command does.
+      result: (artifactAction) =>
+        ARTIFACT_ACTIONS.includes(artifactAction ?? "") ? `artifacts ${artifactAction}` : null,
+      run: async (options) => {
+        const result = /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options));
+        printResult(result, options.json);
+        // #994 and ADR-0020, Decision 4: doctor fails the run when a selected artifact's files
+        // are missing, cannot be read, are not managed, or carry a local edit, when the phase line
+        // is an error, when the managed-file check's formatter failed or could not plan, and when
+        // --check-updates could not record the artifact cache block (cacheBlockProblem), as
+        // `doctor` does for an error (#1030). A selection that is not installed yet does not fail
+        // it, and neither does a lock entry the recipe no longer selects (#1111, owner decision
+        // 6). `artifacts status` reports the same problems and stays informational.
+        if (options.artifactAction === "doctor" && result.ok !== true) {
+          process.exitCode = 1;
+        }
+      },
+    },
+  }),
+);
+
+/**
+ * @param {string} command
+ */
+function isKnownCommand(command) {
+  return Object.hasOwn(commandRunners, command);
+}
+
+/**
+ * The `command` an error result names for a run of `command`: the name its success result uses,
+ * or `null` when Calavera has no such command or action.
+ *
+ * @param {string} command
+ * @param {string | undefined} artifactAction
+ * @returns {string | null}
+ */
+function resultCommandFor(command, artifactAction) {
+  const result = commandRunnerFor(command)?.result ?? null;
+  return typeof result === "function" ? result(artifactAction) : result;
+}
+
+/**
+ * @param {string} command
+ * @returns {CommandRunner | undefined}
+ */
+function commandRunnerFor(command) {
+  return isKnownCommand(command) ? commandRunners[command] : undefined;
+}
+
+/**
+ * @param {CliOptions} options
+ */
+async function main(options) {
+  const run = commandRunnerFor(options.command)?.run;
+
+  if (run === undefined) {
+    printStop(options.json, null, `Unknown command: ${options.command}`);
+    process.exitCode = 1;
     return;
   }
 
-  if (options.command === "init") {
-    printResult(await initRecipe(options), options.json);
-    return;
-  }
+  await run(options);
+}
 
-  if (options.command === "agent-init" || options.command === "bootstrap") {
-    printResult(await agentBootstrap(options), options.json);
-    return;
-  }
-
-  if (options.command === "new") {
-    printResult(await newProject(options));
-    return;
-  }
-
-  if (options.command === "apply") {
-    printResult(await applyRecipe(options), options.json);
-    return;
-  }
-
-  if (options.command === "doctor") {
-    printResult(await doctor(options), options.json);
-    return;
-  }
-
-  if (options.command === "update") {
-    printResult(await applyRecipe(options), options.json);
-    return;
-  }
-
-  if (options.command === "clean") {
-    printResult(await clean(options), options.json, options.dryRun);
-    return;
-  }
-
-  if (options.command === "artifacts") {
-    printResult(
-      /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options)),
-      options.json,
+/**
+ * Prints the error that stopped a run before its command produced a result, whether its arguments
+ * were invalid (#1218) or its command threw while it ran (#1227): as plain text on standard error,
+ * or, with `--json`, as `{ command, ok: false, issues }` on standard output (ADR-0020
+ * Amendment 1), because `--json` always prints JSON.
+ *
+ * @param {boolean} asJSON
+ * @param {string | null} command
+ * @param {string} message
+ */
+function printStop(asJSON, command, message) {
+  if (asJSON) {
+    console.info(
+      JSON.stringify({ command, ok: false, issues: [{ level: "error", message }] }, null, 2),
     );
     return;
   }
 
-  logger.error(`Unknown command: ${options.command}`);
-  process.exitCode = 1;
+  logger.error(message);
+}
+
+/**
+ * The `command` an error result names for a run whose arguments `parseArgs` refused: the name
+ * the success result of the command its arguments name uses, read leniently, or `null` when it
+ * is not a command or artifacts action Calavera has. A lenient reading can take an option's
+ * value for a positional, and that value can be a secret the error never prints, so only a name
+ * from the command map is returned.
+ *
+ * @param {string[]} rawArgs
+ * @returns {string | null}
+ */
+function resultCommandNamedIn(rawArgs) {
+  const { newIndex, args } = calaveraArgs(rawArgs);
+  const { values, positionals } = parseNodeArgs({
+    args,
+    options: cliParseOptions,
+    allowPositionals: true,
+    strict: false,
+  });
+  return resultCommandFor(commandFor(values, positionals, newIndex), positionals[1]);
+}
+
+/**
+ * The error and its causes as text, redacted, as the CLI prints an error that stops a command.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function errorText(error) {
+  try {
+    return formatErrorChain(error);
+  } catch {
+    // A failure to format the error must not hide the error itself.
+    return fallbackErrorText(error);
+  }
 }
 
 /**
@@ -6586,18 +7366,150 @@ async function main() {
  * calls it once the Node.js version check passes.
  */
 export async function runCli() {
+  /** @type {Promise<string | undefined> | undefined} */
+  let versionNotice;
+  /** @type {CliOptions} */
+  let options;
   try {
-    await main();
+    options = parseArgs(args);
   } catch (error) {
-    let text;
-    try {
-      text = formatErrorChain(error);
-    } catch {
-      // A failure to format the error must not hide the error itself.
-      text = fallbackErrorText(error);
-    }
-    logger.error(text);
+    // `--json` is read from the arguments themselves, because their parse failed (#1218). A
+    // `--json` that Node's parser took as another option's missing value, as in
+    // `doctor --config --json`, which it refuses as ambiguous, still counts on purpose: the person
+    // typed `--json`, so the error they get back is JSON.
+    const asJSON = calaveraArgs(args).args.includes("--json");
+    printStop(asJSON, asJSON ? resultCommandNamedIn(args) : null, errorText(error));
     process.exitCode = 1;
+    return;
+  }
+
+  // Before the version check and every command, so the stop is the run's only output (ADR-0023).
+  const unsupportedYarn = await unsupportedYarnVersion();
+  if (unsupportedYarn !== undefined) {
+    printStop(
+      options.json,
+      resultCommandFor(options.command, options.artifactAction),
+      unsupportedYarnMessage(packageJson.name, unsupportedYarn),
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    versionNotice = startVersionCheck(options, args);
+    await main(options);
+  } catch (error) {
+    // A command that throws while it runs prints the same redacted text as plain output, or, with
+    // `--json`, as a JSON result, because `--json` always prints JSON (#1227).
+    printStop(
+      options.json,
+      resultCommandFor(options.command, options.artifactAction),
+      errorText(error),
+    );
+    process.exitCode = 1;
+  }
+
+  // After the command's own output, and after an error too (ADR-0019 Decision 4).
+  if (versionNotice) {
+    await printVersionNotice(versionNotice);
+  }
+}
+
+export const cliPackageRoot = fileURLToPath(new URL("..", import.meta.url));
+
+/**
+ * Starts the check for a newer version in parallel with the command (ADR-0019 Decision 2), or
+ * returns `undefined` for a run that skips it. The request is aborted at the deadline, counted from
+ * its start, and the returned promise settles by then even if the abort does not end the request,
+ * so the check never keeps the process waiting longer. It never rejects.
+ *
+ * @param {CliOptions} options
+ * @param {string[]} runArgs The arguments of this run, as the person gave them.
+ * @returns {Promise<string | undefined> | undefined} The text to print on standard error, if any.
+ */
+function startVersionCheck(options, runArgs) {
+  // Captured now, because `--new` changes the working directory while the request is open.
+  const env = { ...process.env };
+  const cwd = process.cwd();
+
+  if (!versionCheckApplies(options, env)) {
+    return undefined;
+  }
+
+  const launcher = launchingPackageManager(env.npm_config_user_agent) ?? "npm";
+
+  // checkForNewerVersion catches the resolver's failures, so a rejection here is almost always
+  // the deadline. Any rejection is a failed check.
+  return withDeadline(
+    VERSION_CHECK_DEADLINE_MS,
+    () => new Error(`The registry did not answer within ${VERSION_CHECK_DEADLINE_MS} ms.`),
+    (signal) =>
+      checkForNewerVersion({
+        version: packageJson.version,
+        options,
+        cwd,
+        env,
+        packageRoot: cliPackageRoot,
+        packageName: packageJson.name,
+        resolveLatest: (context) =>
+          resolvePackageDistTag({
+            packageName: packageJson.name,
+            tag: "latest",
+            ...context,
+            signal,
+          }),
+        runCommand: (latest) => {
+          const runner = createPackageRunnerCommand(
+            launcher,
+            `${packageJson.name}@${latest}`,
+            "create-project-calavera",
+          );
+          return formatShellCommand({
+            command: runner.command,
+            args: [...runner.args, ...runArgs],
+          });
+        },
+        updateCommand: (latest) => projectDependencyUpdateCommand(cwd, latest),
+      }),
+  )
+    .catch((error) => /** @type {const} */ ({ status: "failed", error }))
+    .then((result) => versionNoticeText(result, env))
+    .catch(() => undefined);
+}
+
+/**
+ * The command that updates the project's own create-project-calavera dependency to `latest`: the
+ * command apply installs with (ADR-0012), so `vp add -D` when Vite+ manages the project.
+ *
+ * @param {string} cwd
+ * @param {string} latest
+ */
+export async function projectDependencyUpdateCommand(cwd, latest) {
+  const packageJSON = /** @type {PackageJSON} */ (await readJSON(join(cwd, "package.json")));
+  const command = devDependencyInstallCommand(
+    detectPackageManager(packageJSON, cwd) ?? "npm",
+    await detectVitePlus(cwd),
+    [`${packageJson.name}@${latest}`],
+    { pnpmWorkspaceRoot: await isPnpmWorkspaceRoot(cwd) },
+  );
+  return formatCommand(command);
+}
+
+/**
+ * Prints the version notice on standard error. It informs, so it uses the informational color,
+ * styled for standard error, so a redirected notice carries no escape codes. Printing it never
+ * changes the run's exit code.
+ *
+ * @param {Promise<string | undefined>} versionNotice
+ */
+async function printVersionNotice(versionNotice) {
+  try {
+    const text = await versionNotice;
+    if (text !== undefined) {
+      process.stderr.write(`${styleText("cyan", text, { stream: process.stderr })}\n`);
+    }
+  } catch {
+    // The notice is never worth a failure of its own.
   }
 }
 

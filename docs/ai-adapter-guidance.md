@@ -41,6 +41,10 @@ block whose script no longer exists, which makes Git refuse every commit or push
 Otherwise, Calavera does not write `.claude/`, `.codex/`, editor settings, global
 agent directories, symlinks, or machine-local configuration. If a tool needs one
 of those locations, wire it up explicitly after reviewing the generated files.
+Point a symbolic link from the tool's folder to the folder under `.agents/`, not
+the other way around: Calavera refuses to install or update artifacts through a
+linked `.agents/`, `.codex/`, or `.calavera/` folder, or through a link on the
+path to any file it installs.
 
 ## Claude Code
 

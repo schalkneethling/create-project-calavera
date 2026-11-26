@@ -1,6 +1,8 @@
 // @ts-check
 import { createHash } from "node:crypto";
 
+import semver from "semver";
+
 // Issue #830: an agent guidance file that an earlier release wrote is an older template, not a
 // local edit, only when its text equals what some release wrote. `--init` cannot ask
 // .calavera/state.json, because Calavera records none of these files there, so this module holds
@@ -15,7 +17,10 @@ import { createHash } from "node:crypto";
 // and its digest here; that test fails until both agree. It also fails when no template lists the
 // version in package.json, so the Version Packages pull request cannot pass until the table lists
 // the release it publishes. Make that change on main: Changesets regenerates the Version Packages
-// branch, so a commit there is lost. A new template text lists the release that will publish it.
+// branch, so a commit there is lost. A new template text lists the release that will publish it:
+// the version the pending changesets produce, which the same test computes with Changesets, and
+// it fails when a template lists any other unpublished version (#1219). When a later changeset
+// changes that version, rename the listed one to match.
 //
 // The text a release wrote is the text compared, except that a Windows line ending (`\r\n`) counts
 // as the Unix one (`\n`), and the version `.agents/calavera/mcp.md` pins in its launch command is
@@ -73,7 +78,7 @@ const GUIDANCE = [
     sha256: ["f198c16e05ee0c587754f173d612b9de266751f845c4ce1914a1857d6d29dcb5"],
   },
   {
-    releases: ["6.1.0", "6.2.0", "6.2.1"],
+    releases: ["6.1.0", "6.2.0", "6.2.1", "7.0.0"],
     sha256: ["c0c6c875f0eb05cbf1dfbce2793a317900407966a65eaf8838e1af4f87d67e00"],
   },
 ];
@@ -169,6 +174,19 @@ const MCP = [
       "8c993d8952d9724aa1c33f5efa2a0a758aeb4ae316bd5dffa2c7f6d9d46e5c37",
     ],
   },
+  {
+    // #1089: the Cursor entry gains `type: "stdio"`, and #1204 moves the OpenCode entry under
+    // `mcp.servers` and says OpenCode 2 is required. The next release publishes it, which the
+    // pending major changeset makes 7.0.0 (#1219).
+    releases: ["7.0.0"],
+    pinned: true,
+    sha256: [
+      "cb854dca45d3bd995216f0152b352168bd91e08195b6c38ff3cc536f3840ff7e",
+      "79fd3d0af94948cb3e174ab1de0823c713955fe7f3bd3b86546212361f2bf030",
+      "1ae4c2aa7317c0a811b4733cff4ac221f84a10975460af58abc1fabe762e724e",
+      "6cb7f881dd030d62d31109721dbf165777ef626992cecf9fd0d3634815ee0d50",
+    ],
+  },
 ];
 
 /** @type {Record<EarlierGuidanceKind, EarlierTemplate[]>} */
@@ -183,6 +201,81 @@ function sha256(text) {
 }
 
 /**
+ * Replaces the version that `text` pins in `create-project-calavera@<version>` with a placeholder,
+ * so two texts that differ only in the pinned release compare equal. `findEarlierGuidance` uses it
+ * for the setup notes, and `eject` uses it to compare the `calavera` MCP entries with the launch
+ * commands, as ADR-0017 Decision 2 asks.
+ *
+ * @param {string} text
+ * @returns {{ normalized: string, pin: string | undefined } | undefined} The text with its pin
+ *   replaced, and the version it pinned, or undefined when no release can have written the text:
+ *   it already holds the placeholder.
+ */
+export function normalizePinnedVersion(text) {
+  // The placeholder only stands in for a version inside this module. A text that already holds it
+  // was edited: with one pin left as the placeholder, normalizing the others would produce exactly
+  // a known text and the edit would be overwritten.
+  if (text.includes(VERSION_PLACEHOLDER)) return undefined;
+  const pins = new Set([...text.matchAll(PINNED_VERSION)].map((match) => match[1]));
+  // A text that pins two different versions was never written by one release: only the first is
+  // replaced below, so the other stays in the text and cannot match a text that pins one version.
+  const [pin] = pins;
+  return {
+    normalized:
+      pin === undefined
+        ? text
+        : text.replaceAll(
+            `create-project-calavera@${pin}`,
+            `create-project-calavera@${VERSION_PLACEHOLDER}`,
+          ),
+    pin,
+  };
+}
+
+/**
+ * The text with its pinned version replaced, as `normalizePinnedVersion` gives it, only when npm
+ * has that version (owner decision of 2026-11-23 on #1219). `--init` and `eject` call it on the
+ * `calavera` MCP entry in a harness file, so an entry pinned to any other version, such as a local
+ * build's `6.2.1-local.1`, is a local edit. Neither command asks npm; the answer comes from two
+ * records the repository already keeps:
+ *
+ * - The `releases` of the setup-notes templates, the list `findEarlierGuidance` checks for
+ *   `.agents/calavera/mcp.md`. It names every published release, but it also names the next
+ *   release before it is published, because a new template text lists the release that will
+ *   publish it, as 7.0.0 is listed while package.json holds 6.2.1.
+ * - `written`, the version this checkout writes, which Changesets sets in package.json. A listed
+ *   version newer than it is the next release, which npm does not have yet. A listed version
+ *   older than it is taken as published. earlier-guidance-table.test.mjs keeps that true: a
+ *   template may name an unpublished version only while it is package.json's own version or the
+ *   one the pending changesets produce, so a guess such as 6.3.0, which a major changeset turned
+ *   into 7.0.0, fails before it can fall behind package.json. 2.0.3, 2.0.5, and 2.1.1 reached
+ *   package.json without being published, and the list names none of them.
+ *
+ * `written` itself always counts, listed or not, so the entries this checkout writes stay
+ * Calavera's. A published CLI always runs a version npm has. A checkout whose version npm does not
+ * have yet, such as `main` between the Version Packages merge and the GitHub release that
+ * publishes it, also counts an entry pinned to its version that it finds in a project, because
+ * that entry is exactly what it writes.
+ *
+ * Call it on the text found in the project, never on the text Calavera writes: when both sides
+ * normalize to undefined they would compare equal.
+ *
+ * @param {string} text
+ * @param {string | undefined} written The version this checkout pins in the entries it writes.
+ * @returns {string | undefined} Undefined when the text pins no version, pins one npm does not
+ *   have, or holds the placeholder, and when `written` is undefined.
+ */
+export function normalizePublishedPin(text, written) {
+  const pinned = normalizePinnedVersion(text);
+  if (pinned === undefined || written === undefined) return undefined;
+  const { normalized, pin } = pinned;
+  if (pin === undefined) return undefined;
+  if (pin === written) return normalized;
+  const listed = MCP.some(({ releases }) => releases.includes(pin));
+  return listed && semver.lt(pin, written) ? normalized : undefined;
+}
+
+/**
  * Finds the earlier Calavera release whose text `text` is.
  *
  * @param {EarlierGuidanceKind} kind
@@ -192,22 +285,9 @@ function sha256(text) {
  *   is not one a release wrote, which makes it a local edit.
  */
 export function findEarlierGuidance(kind, text) {
-  const unixText = text.replaceAll("\r\n", "\n");
-  // The placeholder only stands in for a version inside this module. A file that already holds it
-  // was edited: with one pin left as the placeholder, normalizing the others would produce exactly
-  // a known text and the edit would be overwritten.
-  if (unixText.includes(VERSION_PLACEHOLDER)) return undefined;
-  const pins = new Set([...unixText.matchAll(PINNED_VERSION)].map((match) => match[1]));
-  // A text that pins two different versions was never written by one release: only the first is
-  // replaced below, so the other stays in the text and the digest cannot match.
-  const [pin] = pins;
-  const normalized =
-    pin === undefined
-      ? unixText
-      : unixText.replaceAll(
-          `create-project-calavera@${pin}`,
-          `create-project-calavera@${VERSION_PLACEHOLDER}`,
-        );
+  const pinned = normalizePinnedVersion(text.replaceAll("\r\n", "\n"));
+  if (pinned === undefined) return undefined;
+  const { normalized, pin } = pinned;
   const digest = sha256(normalized);
 
   const template = EARLIER_TEMPLATES[kind].find(

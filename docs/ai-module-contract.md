@@ -83,6 +83,8 @@ Legacy AI item `src` values resolve through the shared artifact catalog and must
 - `hook`: `hooks/<name>`
 - `agent`: `agents/<name>.md`
 
+A legacy item cannot record inputs. `apply`, `update`, their dry runs, and the MCP `dry_run_apply` and `apply_recipe` tools refuse, before writing anything, a legacy item that selects an artifact that declares wiring or inputs, and name `artifacts migrate`, which rewrites each legacy item as an ID item.
+
 ## Managed State And Write Safety
 
 Calavera's managed state lives in `.calavera/state.json`. Generated files are
@@ -104,7 +106,9 @@ existing destination when that destination is not recorded as Calavera-managed,
 or when the installed content no longer matches the recorded state hash. `clean`
 uses the same hashes and skips stale managed items that have local edits. Apply keeps
 the record of an artifact the recipe no longer selects, so `clean` can remove its
-unedited output later. Before `clean` deletes a skill, it removes the hook blocks
+unedited output later. The base Calavera skill in `.agents/skills/calavera` is the
+exception: it is never stale, whether `--init` or a recipe installed it, so
+`clean` keeps it and only `eject` removes it. Before `clean` deletes a skill, it removes the hook blocks
 and settings groups that skill's wiring added, but only text that matches the
 record; an edited block or group stops `clean` with a conflict.
 

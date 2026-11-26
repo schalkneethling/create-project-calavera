@@ -17,15 +17,20 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
+import Ajv from "ajv";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
-import { callMcpTool } from "../src/mcp.js";
+import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
+import { TemporaryFolderError } from "../src/utils/cleanup.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
+import { vitePlusFixtureRelease, writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
 
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
 const LOCK_PATH = ".calavera/artifacts.lock.json";
@@ -97,7 +102,10 @@ test("apply --dry-run without a lock reports the artifacts it would lock and wri
       result.autoInstalledArtifacts[0].package,
       "@schalkneethling/calavera-skill-project-goal",
     );
-    const aiWrites = result.changes.filter(({ category }) => category === "ai");
+    // #956: an output that already matches is reported as unchanged, so only writes count here.
+    const aiWrites = result.changes.filter(
+      ({ category, type }) => category === "ai" && type === "write",
+    );
     assert.deepEqual(aiWrites.map(({ path }) => path).sort(), [
       ".agents/hooks/claude-code/block-dangerous-commands.mjs",
       ".agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
@@ -120,8 +128,15 @@ test("apply --dry-run reports the registry artifacts resolve from and the npm co
         ["hook-block-dangerous-commands", "0.4.0"],
       ]),
       {
-        registry: { origin: "https://npm.example.com", source: "project .npmrc" },
-        warnings: ["Ignored //npm.example.com/:_authToken in the project .npmrc."],
+        // artifact-core also names the setting, for messages only; the report leaves it out.
+        registry: {
+          origin: "https://npm.example.com",
+          source: "project .npmrc",
+          setting: "@schalkneethling:registry",
+        },
+        warnings: [
+          "Ignored https-proxy in the project .npmrc: Calavera reads proxies only from user configuration files and environment variables. No other proxy setting applies. To use it, set it in your user .npmrc.",
+        ],
       },
     );
     const recipe = recipeWith(["skill-project-goal", "hook-block-dangerous-commands"]);
@@ -131,7 +146,7 @@ test("apply --dry-run reports the registry artifacts resolve from and the npm co
       { origin: "https://npm.example.com", source: "project .npmrc" },
     ]);
     assert.deepEqual(result.artifactWarnings, [
-      "Ignored //npm.example.com/:_authToken in the project .npmrc.",
+      "Ignored https-proxy in the project .npmrc: Calavera reads proxies only from user configuration files and environment variables. No other proxy setting applies. To use it, set it in your user .npmrc.",
     ]);
 
     const preview = await callMcpTool("dry_run_apply", { recipe }, registry);
@@ -192,7 +207,8 @@ test("apply without a lock installs, locks, and applies the selected artifacts",
     );
     assert.ok(
       result.changes.some(
-        ({ path, category }) => path === ".agents/skills/project-goal" && category === "ai",
+        ({ path, category, type }) =>
+          path === ".agents/skills/project-goal" && category === "ai" && type === "write",
       ),
       "the apply result names the artifact output it wrote",
     );
@@ -289,7 +305,7 @@ test("an untracked file at an artifact destination stops apply and dry run witho
           assert.match(error.message, /skill-project-goal/);
           assert.match(
             error.message,
-            /the artifact lock, artifact outputs, and Calavera state were not changed/,
+            /this step did not change the artifact lock, artifact outputs, or Calavera state/,
           );
           assert.ok(error.cause instanceof Error);
           assert.match(
@@ -407,6 +423,125 @@ test("dry_run_apply and apply_recipe auto-install unlocked artifacts the same wa
   });
 });
 
+test("dry_run_apply and apply --dry-run --json say which artifacts they would lock already have matching files (#1021)", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(
+      new Map([
+        ["skill-project-goal", "0.1.0"],
+        ["skill-code-review", "0.3.0"],
+      ]),
+    );
+    await applyRecipeObject(recipeWith(["skill-project-goal"]), applyOptions, registry);
+    // As after a bootstrap that installed the files before the project had a lock (#749).
+    await rm(LOCK_PATH);
+    const recipe = recipeWith(["skill-project-goal", "skill-code-review"]);
+    const matching = (/** @type {{ id: string, filesAlreadyMatch?: boolean }[]} */ entries) =>
+      entries.map(({ id, filesAlreadyMatch }) => ({ id, filesAlreadyMatch }));
+    const expected = [
+      { id: "skill-project-goal", filesAlreadyMatch: true },
+      { id: "skill-code-review", filesAlreadyMatch: false },
+    ];
+
+    // `apply --dry-run --json` prints this result as it is.
+    const cliResult = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    assert.deepEqual(matching(cliResult.autoInstalledArtifacts), expected);
+
+    const preview = await callMcpTool("dry_run_apply", { recipe }, registry);
+    assert.deepEqual(matching(preview.result.autoInstalledArtifacts), expected);
+
+    // The output schema dry_run_apply advertises declares the field and accepts the result.
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMcpServer();
+    const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const { tools } = await client.listTools();
+      const outputSchema = tools.find(({ name }) => name === "dry_run_apply")?.outputSchema;
+      const entrySchema =
+        outputSchema?.properties?.result?.properties?.autoInstalledArtifacts?.items;
+      assert.equal(entrySchema?.properties?.filesAlreadyMatch?.type, "boolean");
+      assert.ok(entrySchema?.required?.includes("filesAlreadyMatch"));
+      const validate = new Ajv({ allErrors: true, strict: false }).compile(outputSchema);
+      assert.ok(validate(preview), JSON.stringify(validate.errors));
+      const withoutField = structuredClone(preview);
+      delete withoutField.result.autoInstalledArtifacts[0].filesAlreadyMatch;
+      assert.equal(validate(withoutField), false, "an entry without the field is rejected");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+
+    // Apply reports the same, and the lock it writes keeps its own shape.
+    const applied = await applyRecipeObject(
+      cliResult.recipe,
+      { ...applyOptions, approvedArtifacts: cliResult.autoInstalledArtifacts },
+      registry,
+    );
+    assert.deepEqual(matching(applied.autoInstalledArtifacts), expected);
+    for (const entry of (await readLock()).artifacts) {
+      assert.equal(Object.hasOwn(entry, "filesAlreadyMatch"), false, entry.id);
+    }
+  });
+});
+
+test("dry_run_apply through the MCP server resolves artifacts from the registry it was given and passes output validation (#1147)", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    const before = await snapshot();
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMcpServer(registry);
+    const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      // Listing the tools first makes the client validate the result against the output schema
+      // too, in addition to the server's own validation before it sends the result.
+      await client.listTools();
+      const response = await client.callTool({ name: "dry_run_apply", arguments: { recipe } });
+
+      assert.equal(response.isError, undefined, JSON.stringify(response.content));
+      const preview =
+        /** @type {{ result: { autoInstalledArtifacts: { id: string, version: string }[] } }} */ (
+          response.structuredContent
+        );
+      assert.deepEqual(idsAndVersions(preview.result.autoInstalledArtifacts), [
+        { id: "skill-project-goal", version: "0.1.0" },
+      ]);
+      assert.deepEqual(registry.requests, [{ id: "skill-project-goal", version: undefined }]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("an artifact apply locks with only some of its files matching does not report them as matching (#1021)", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["hook-block-dangerous-commands", "0.4.0"]]));
+    const recipe = recipeWith(["hook-block-dangerous-commands"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(LOCK_PATH);
+    await rm(".agents/hooks/claude-code/block-dangerous-commands.mjs");
+
+    const preview = await callMcpTool("dry_run_apply", { recipe }, registry);
+
+    assert.deepEqual(
+      preview.result.changes
+        .filter(({ category }) => category === "ai")
+        .map(({ path, type }) => `${type} ${path}`),
+      [
+        "write .agents/hooks/claude-code/block-dangerous-commands.mjs",
+        "unchanged .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+      ],
+    );
+    assert.equal(preview.result.autoInstalledArtifacts[0].filesAlreadyMatch, false);
+  });
+});
+
 test("apply restores a locked package that is missing from .calavera/packages and leaves no staging folder", async () => {
   await inProject(async () => {
     const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
@@ -476,6 +611,122 @@ test("apply and its dry run remove the temporary folders they rebuild a locked p
   });
 });
 
+test("a dry run with every artifact locked removes its rebuild folders when the rebuild stops", async (t) => {
+  await inProject(async () => {
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(
+      recipe,
+      applyOptions,
+      stubRegistry(new Map([["skill-project-goal", "0.1.0"]])),
+    );
+    await rm(".calavera/packages", { recursive: true });
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(
+        recipe,
+        { ...applyOptions, dryRun: true },
+        stubRegistry(new Map(), {
+          failFor: "skill-project-goal",
+          error: new Error("ENOTCACHED: skill-project-goal is not in the offline cache"),
+        }),
+      ),
+      /ENOTCACHED/,
+    );
+
+    // #989: the folder is removed when the locked package cannot be rebuilt from the offline cache.
+    assert.equal(folders.length, 1, "the dry run starts rebuilding the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
+test("a dry run with every artifact locked removes its rebuild folders when planning the outputs stops", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    await writeFile(".agents/skills/project-goal/SKILL.md", "local edit\n");
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry),
+      /Refusing to overwrite existing AI artifact: \.agents\/skills\/project-goal/,
+    );
+
+    // #989: the folder is removed when the package is rebuilt and planning then refuses an edited
+    // output.
+    assert.equal(folders.length, 1, "the dry run rebuilds the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
+test("a dry run with every artifact locked removes its rebuild folders when planning the wiring stops", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-protected-branch-guard", "0.1.0"]]));
+    const recipe = {
+      ...buildRecipe("minimal", [], "npm"),
+      ai: [{ id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } }],
+    };
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    const prePush = ".vite-hooks/pre-push";
+    await writeFile(prePush, (await readFile(prePush, "utf8")).replace("main", "main # mine"));
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry),
+      /\.vite-hooks\/pre-push: the Calavera block for .* was edited/,
+    );
+
+    // #989: the folder is removed when planning the wiring, not the outputs, stops the dry run.
+    assert.equal(folders.length, 1, "the dry run rebuilds the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
+test("a dry run with every artifact locked removes its rebuild folders when formatting the state stops", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    // #838: the project's Vite+ formatter loads, so planning runs, but cannot format the state.
+    await writeFile(
+      "package.json",
+      `${JSON.stringify({ name: "fixture", scripts: {}, devDependencies: { "vite-plus": vitePlusFixtureRelease } }, null, 2)}\n`,
+    );
+    await writeVitePlusFormatter(process.cwd(), { failFor: ".calavera/state.json" });
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry),
+      /could not format \.calavera\/state\.json: it exited with code 2\./,
+    );
+
+    // #989: the folder is removed when formatting the state, the last step before apply disposes
+    // the rebuilt sources, stops the dry run.
+    assert.equal(folders.length, 1, "the dry run rebuilds the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
 test("apply replaces a locked package whose payload no longer matches the lock", async () => {
   await inProject(async () => {
     const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
@@ -525,7 +776,7 @@ test("apply that installs an unlocked artifact also restores a missing locked pa
   });
 });
 
-test("when removing the install's staging folder fails, apply still removes the rebuild folder and reports the failure", async (t) => {
+test("when removing the install's staging folder fails, apply finishes, still removes the rebuild folder, and reports the failure", async (t) => {
   await inProject(async () => {
     const releases = new Map([["skill-project-goal", "0.1.0"]]);
     const registry = stubRegistry(releases);
@@ -534,7 +785,7 @@ test("when removing the install's staging folder fails, apply still removes the 
     releases.set("skill-code-review", "0.3.0");
     const folders = recordRebuildFolders(t);
     const remove = fsPromises.rm;
-    const busy = new Error("EBUSY: resource busy");
+    const busy = Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
     t.mock.method(
       fsPromises,
       "rm",
@@ -547,19 +798,17 @@ test("when removing the install's staging folder fails, apply still removes the 
     );
     syncBuiltinESMExports();
 
-    await assert.rejects(
-      applyRecipeObject(
-        recipeWith(["skill-project-goal", "skill-code-review"]),
-        applyOptions,
-        registry,
-      ),
-      (/** @type {Error} */ error) => {
-        assert.ok(error instanceof AggregateError);
-        assert.deepEqual(error.errors, [busy]);
-        assert.match(error.message, /EBUSY: resource busy/);
-        return true;
-      },
+    // #1033 (owner decision of 2026-11-18): the failure comes after the AI outputs are written, so
+    // it is a warning that names the folder, and apply finishes.
+    const result = await applyRecipeObject(
+      recipeWith(["skill-project-goal", "skill-code-review"]),
+      applyOptions,
+      registry,
     );
+    assert.equal(result.temporaryFolderLeftovers.length, 1);
+    const [leftover] = result.temporaryFolderLeftovers;
+    assert.match(leftover.path, /\.calavera\/\.transactions\/\d+-\d+$/);
+    assert.match(leftover.reason, /could not remove this temporary folder \(EBUSY\)/);
     assert.equal(folders.length, 1, "apply rebuilds the missing locked package once");
     await assert.rejects(
       stat(folders[0]),
@@ -600,7 +849,12 @@ test("when a locked package cannot be rebuilt and removing its rebuild folder fa
       ),
       (/** @type {Error} */ error) => {
         assert.ok(error instanceof AggregateError);
-        assert.deepEqual(error.errors, [offlineMiss, busy]);
+        assert.equal(error.errors.length, 2);
+        assert.equal(error.errors[0], offlineMiss);
+        // The removal failure names the rebuild folder and keeps the underlying error as its cause.
+        assert.ok(error.errors[1] instanceof TemporaryFolderError);
+        assert.match(error.errors[1].path, /calavera-locked-artifact-/);
+        assert.equal(error.errors[1].cause, busy);
         assert.equal(error.cause, offlineMiss);
         return true;
       },
@@ -772,9 +1026,12 @@ test("a dry run with locked and unlocked artifacts reports only the unlocked one
     assert.deepEqual(idsAndVersions(result.autoInstalledArtifacts), [
       { id: "skill-code-review", version: "0.3.0" },
     ]);
+    // #956: the locked artifact's files already match, so it is named once, as unchanged.
     assert.deepEqual(
-      result.changes.filter(({ category }) => category === "ai").map(({ path }) => path),
-      [".agents/skills/code-review"],
+      result.changes
+        .filter(({ category }) => category === "ai")
+        .map(({ path, type }) => `${type} ${path}`),
+      ["write .agents/skills/code-review", "unchanged .agents/skills/project-goal"],
     );
     assert.deepEqual(await snapshot(), before);
   });
@@ -836,7 +1093,7 @@ test("a directory cleanup failure after a rollback is reported with the install 
           ["ENOSPC", "EACCES"],
         );
         assert.equal(error.cause, error.errors[0]);
-        assert.match(error.message, /the artifact lock, artifact outputs, and Calavera state/);
+        assert.match(error.message, /the artifact lock, artifact outputs, or Calavera state/);
         assert.match(error.message, /empty directories may remain: EACCES/);
         return true;
       },

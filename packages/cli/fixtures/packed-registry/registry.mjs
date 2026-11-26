@@ -1,7 +1,8 @@
 // Stands in for the npm registry only: it answers with the workspace artifact tarballs that
-// scripts/release-integration.test.mjs packs, named by CALAVERA_PACKED_ARTIFACTS (a JSON object
-// keyed by artifact ID). The real extractArtifactPackage then verifies integrity, package identity,
-// the manifest, compatibility with the workspace CLI version, and the payload.
+// scripts/release-integration.test.mjs packs and serves on a loopback port, named by
+// CALAVERA_PACKED_ARTIFACTS (a JSON object keyed by artifact ID). The real
+// extractArtifactPackage then verifies integrity, package identity, the manifest, compatibility
+// with the workspace CLI version, and the payload.
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
 export * from "@schalkneethling/calavera-artifact-core/registry";
@@ -20,7 +21,7 @@ export async function resolveArtifactPackage(request) {
     artifact,
     packageName: packed.packageName,
     version: request.version ?? packed.version,
-    resolved: packed.path,
+    resolved: packed.url,
     integrity: packed.integrity,
     tag: request.tag ?? "latest",
     cache: request.cache,

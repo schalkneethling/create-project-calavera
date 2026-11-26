@@ -4,8 +4,10 @@ export const GITHUB_REPOSITORY_CONTROLS_ID = "github-repository-controls";
 /** Where apply writes the repository-controls administration script. */
 export const REPOSITORY_CONTROLS_SCRIPT_PATH = "scripts/repository-controls.mjs";
 
-const MERGE_METHODS = new Set(["merge", "squash", "rebase"]);
-const CODEQL_LANGUAGES = new Set([
+// Each list is the one place its values live: the validation below and the shared MCP and WebMCP
+// input schema in tool-schemas.js both read it (ADR-0018, Decision 2).
+export const MERGE_METHODS = Object.freeze(["merge", "squash", "rebase"]);
+export const CODEQL_LANGUAGES = Object.freeze([
   "actions",
   "c-cpp",
   "csharp",
@@ -16,7 +18,11 @@ const CODEQL_LANGUAGES = new Set([
   "ruby",
   "swift",
 ]);
-const DEPENDABOT_ECOSYSTEMS = new Set(["npm", "github-actions"]);
+export const CODEQL_QUERY_SUITES = Object.freeze(["default", "extended"]);
+export const DEPENDABOT_ECOSYSTEMS = Object.freeze(["npm", "github-actions"]);
+/** The owner/name form of `repository`, without anchors, so the schema can allow the whitespace the check trims. */
+export const REPOSITORY_NAME_PATTERN = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
+export const RELEASE_ENVIRONMENT_MAX_WAIT_TIMER = 43_200;
 
 /**
  * @param {string} name
@@ -55,7 +61,7 @@ function normalizeBoolean(name, value, fallback) {
  * @param {string} name
  * @param {unknown} value
  * @param {string[]} fallback
- * @param {Set<string>} [allowed]
+ * @param {readonly string[]} [allowed]
  */
 function normalizeStringArray(name, value, fallback, allowed) {
   const normalized = value === undefined ? fallback : value;
@@ -67,7 +73,7 @@ function normalizeStringArray(name, value, fallback, allowed) {
   }
   const unique = [...new Set(normalized.map((item) => item.trim()))];
   if (allowed) {
-    const unknown = unique.filter((item) => !allowed.has(item));
+    const unknown = unique.filter((item) => !allowed.includes(item));
     if (unknown.length > 0) throw new Error(`Invalid ${name}: ${unknown.join(", ")}.`);
   }
   return unique;
@@ -93,10 +99,10 @@ function normalizeReleaseEnvironment(value, defaultBranch) {
     typeof waitTimer !== "number" ||
     !Number.isInteger(waitTimer) ||
     waitTimer < 0 ||
-    waitTimer > 43_200
+    waitTimer > RELEASE_ENVIRONMENT_MAX_WAIT_TIMER
   ) {
     throw new Error(
-      "github-repository-controls.releaseEnvironment.waitTimer must be an integer from 0 to 43200.",
+      `github-repository-controls.releaseEnvironment.waitTimer must be an integer from 0 to ${RELEASE_ENVIRONMENT_MAX_WAIT_TIMER}.`,
     );
   }
   const reviewers = normalizeStringArray(
@@ -162,7 +168,7 @@ export function normalizeGithubRepositoryControlsOptions(value) {
   ]);
 
   const repository = normalizeString("github-repository-controls.repository", value.repository, "");
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+  if (!new RegExp(`^${REPOSITORY_NAME_PATTERN}$`).test(repository)) {
     throw new Error("github-repository-controls.repository must use owner/name format.");
   }
   // #844: there is no fixed fallback. Apply fills an omitted defaultBranch from the repository's
@@ -181,7 +187,7 @@ export function normalizeGithubRepositoryControlsOptions(value) {
     throw new Error("github-repository-controls.mergeMethods must contain at least one method.");
   }
   const codeqlQuerySuite = value.codeqlQuerySuite ?? "extended";
-  if (codeqlQuerySuite !== "default" && codeqlQuerySuite !== "extended") {
+  if (typeof codeqlQuerySuite !== "string" || !CODEQL_QUERY_SUITES.includes(codeqlQuerySuite)) {
     throw new Error("github-repository-controls.codeqlQuerySuite must be default or extended.");
   }
   const dependabotEcosystems = normalizeStringArray(

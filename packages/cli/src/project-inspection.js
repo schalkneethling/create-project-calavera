@@ -1,5 +1,6 @@
 import { REPOSITORY_CONTROLS_SCRIPT_PATH } from "./github-repository-controls-options.js";
 import { HTML_VALIDATE_IGNORE_PATH } from "./ignore-lines.js";
+import { CONFIG_FILE } from "./project-local-commands.js";
 
 // html-validate exits 1 when no file matches, so lint:html runs it through
 // this managed wrapper, which passes when there is nothing to check (#644).
@@ -85,7 +86,7 @@ export const integrationConfigFiles = Object.freeze(
 
 export const projectInspectionFiles = Object.freeze([
   "package.json",
-  "calavera.config.json",
+  CONFIG_FILE,
   ...Object.values(packageManagerLockfiles).flat(),
   ...Object.values(integrationConfigFiles).flat(),
   "vite.config.js",

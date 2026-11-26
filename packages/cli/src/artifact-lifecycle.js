@@ -1,6 +1,19 @@
 // @ts-check
-import { cp, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
+import nodePath, { dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 
 import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
@@ -12,33 +25,48 @@ import {
 import packageJson from "../package.json" with { type: "json" };
 
 import {
+  AI_ARTIFACT_OUTPUT_FOLDERS,
   aiArtifactOutputPaths,
   buildAiApplyResult,
   CODE_RABBIT_CONFIG_PATH,
-  hashAiInstall,
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
-import { assertFirstSelection } from "./ai/recipe-items.js";
+import { assertFirstSelection, assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
-import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
+import { formatterFailure } from "./phase-managed-files.js";
+import { phaseLine, phaseNotes, unrecordedFileEntries } from "./phase-lines.js";
+import { deriveProjectPhase } from "./project-phase.js";
+import { validateRecipe } from "./recipe.js";
+import { artifactReleaseNotesUrl, isArtifactHealthy } from "./artifact-status-report.js";
 import {
   artifactCommand,
   artifactTagFlags,
   artifactUpdateCommand,
 } from "./project-local-commands.js";
-import { createEmptyState, normalizeState } from "./state.js";
-import { errorAfterCleanups, runCleanups } from "./utils/cleanup.js";
-import { fileExists } from "./utils/fs.js";
-import { formatGeneratedText } from "./utils/generated-text.js";
+import { createEmptyState, mergeInstalledAiArtifacts, normalizeState } from "./state.js";
+import {
+  cleanupFailures,
+  createTemporaryFolder,
+  errorAfterCleanups,
+  errorWithLeftovers,
+  removeTemporaryFolder,
+  runCleanups,
+  temporaryFolderLeftovers,
+} from "./utils/cleanup.js";
+import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
+import { FormatterFailure } from "./utils/formatter-failure.js";
+import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
+import { rewriteLossProblem } from "./utils/json-rewrite.js";
+import { withDeadline } from "./utils/deadline.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 
-const LOCK_PATH = ".calavera/artifacts.lock.json";
-const STATE_PATH = ".calavera/state.json";
-const CACHE_ROOT = ".calavera/cache";
-const CACHE_PATH = `${CACHE_ROOT}/npm`;
-const PACKAGE_PATH = ".calavera/packages";
-const TRANSACTION_PATH = ".calavera/artifact-transaction.json";
-const TRANSACTION_ROOT = ".calavera/.transactions";
+export const LOCK_PATH = ".calavera/artifacts.lock.json";
+export const STATE_PATH = ".calavera/state.json";
+export const CACHE_ROOT = ".calavera/cache";
+export const CACHE_PATH = `${CACHE_ROOT}/npm`;
+export const PACKAGE_PATH = ".calavera/packages";
+export const TRANSACTION_PATH = ".calavera/artifact-transaction.json";
+export const TRANSACTION_ROOT = ".calavera/.transactions";
 
 // #841: the npm cache that artifact packages resolve through is not committed (owner decision,
 // 2026-11-14). Apply keeps it out of Git with its own marked `.gitignore` block (ADR-0016,
@@ -143,9 +171,11 @@ async function planArtifactCacheBlock(state, declared, command) {
 /**
  * @typedef {{ config: string, dryRun: boolean, artifactAction?: string, artifactId?: string, artifactTag?: "latest" | "next", artifactAll?: boolean, checkUpdates?: boolean }} ArtifactOptions
  * @typedef {{ id: string, type: "skill" | "hook" | "agent", package: string, version: string, resolved: string, integrity: string, tag: "latest" | "next", manifestVersion: number, destination: string, payloadHash: string, target?: string }} ArtifactLockEntry
- * @typedef {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage, loadFormatter?: () => Promise<ProjectFormatter> }} ArtifactServices
- *   `loadFormatter` loads the formatter for the state and lock an install writes; without it, the
- *   project's own formatter in the working directory.
+ * @typedef {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage, loadFormatter?: () => Promise<ProjectFormatter>, updateCheckDeadlineMs?: number }} ArtifactServices
+ *   `loadFormatter` loads the formatter for the state and lock an install writes, and for the
+ *   recipe a migration writes; without it, the project's own formatter in the working directory.
+ *   `updateCheckDeadlineMs` holds each registry lookup of an update check to that deadline instead
+ *   of UPDATE_CHECK_DEADLINE_MS, so a test can use a short one.
  * @typedef {{ resolve: typeof resolveArtifactPackage, extract: typeof extractArtifactPackage }} ArtifactRegistry
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
@@ -159,6 +189,13 @@ async function planArtifactCacheBlock(state, declared, command) {
  */
 
 /**
+ * How long one registry lookup of an update check may take, in milliseconds, before status reports
+ * it for that artifact and moves on (#1138). npm's own timeout is five minutes, which leaves a
+ * registry that accepts the connection and never answers holding the report that long.
+ */
+const UPDATE_CHECK_DEADLINE_MS = 15_000;
+
+/**
  * @param {ArtifactServices} services
  * @returns {() => Promise<ProjectFormatter>}
  */
@@ -167,7 +204,7 @@ function artifactFormatterLoader(services) {
 }
 
 /** @param {ArtifactServices} services @returns {ArtifactRegistry} */
-function artifactRegistry(services) {
+export function artifactRegistry(services) {
   return {
     resolve: services.resolve ?? resolveArtifactPackage,
     extract: services.extract ?? extractArtifactPackage,
@@ -186,7 +223,14 @@ function registryNotes() {
   const warnings = new Set();
   return {
     add({ registry, warnings: resolutionWarnings = [] }) {
-      if (registry) registries.set(`${registry.origin} ${registry.source}`, registry);
+      // artifact-core's registry also names its `setting`, for messages only (ADR-0021), so the
+      // reported registry keeps only the origin and the source.
+      if (registry) {
+        registries.set(`${registry.origin} ${registry.source}`, {
+          origin: registry.origin,
+          source: registry.source,
+        });
+      }
       for (const warning of resolutionWarnings) warnings.add(warning);
     },
     notes: () => ({ registries: [...registries.values()], warnings: [...warnings] }),
@@ -194,26 +238,196 @@ function registryNotes() {
 }
 
 /**
+ * What each `artifacts` action runs, in the order the error for an unknown action lists them.
+ * Each action's result names it `artifacts <action>`, so an error result for that action names it
+ * the same way (#1227). The list of actions comes from this table, so an action cannot run without
+ * also being named.
+ *
+ * @type {Readonly<Record<string, (options: ArtifactOptions, registry: ReturnType<typeof artifactRegistry>, loadFormatter: ReturnType<typeof artifactFormatterLoader>, services: ArtifactServices) => Promise<unknown>>>}
+ */
+const ARTIFACT_ACTION_RUNNERS = Object.freeze({
+  install: (options, registry, loadFormatter) =>
+    installArtifacts(options, false, registry, loadFormatter),
+  status: (options, registry, loadFormatter, services) =>
+    artifactStatus(options, registry, loadFormatter, {
+      updateCheckDeadlineMs: services.updateCheckDeadlineMs,
+    }),
+  doctor: (options, registry, loadFormatter, services) =>
+    artifactStatus(options, registry, loadFormatter, {
+      updateCheckDeadlineMs: services.updateCheckDeadlineMs,
+    }),
+  migrate: (options, _registry, loadFormatter) => migrateRecipe(options, loadFormatter),
+  update: (options, registry, loadFormatter) =>
+    installArtifacts(options, true, registry, loadFormatter),
+});
+
+/** The actions `artifacts` runs. */
+export const ARTIFACT_ACTIONS = Object.freeze(Object.keys(ARTIFACT_ACTION_RUNNERS));
+
+/**
  * @param {ArtifactOptions} options
  * @param {ArtifactServices} [services]
  */
 export async function runArtifactCommand(options, services = {}) {
-  await recoverArtifactTransaction();
-  const registry = artifactRegistry(services);
-  const loadFormatter = artifactFormatterLoader(services);
-  switch (options.artifactAction) {
-    case "migrate":
-      return migrateRecipe(options);
-    case "status":
-    case "doctor":
-      return artifactStatus(options, registry, loadFormatter);
-    case "install":
-      return installArtifacts(options, false, registry, loadFormatter);
-    case "update":
-      return installArtifacts(options, true, registry, loadFormatter);
-    default:
-      throw new Error("Artifacts command must be install, status, doctor, migrate, or update.");
+  const action = options.artifactAction ?? "";
+  // ADR-0020, owner decision 20: artifacts doctor reports a pending transaction instead of
+  // recovering it, because the recovery writes files; every other action recovers it first.
+  if (action !== "doctor") await recoverArtifactTransaction();
+  // Object.hasOwn, so a name such as "constructor" is not an action.
+  const run = Object.hasOwn(ARTIFACT_ACTION_RUNNERS, action)
+    ? ARTIFACT_ACTION_RUNNERS[action]
+    : undefined;
+  if (!run) {
+    throw new Error(
+      `Artifacts command must be ${new Intl.ListFormat("en", { type: "disjunction" }).format(ARTIFACT_ACTIONS)}.`,
+    );
   }
+  return run(options, artifactRegistry(services), artifactFormatterLoader(services), services);
+}
+
+/**
+ * The `artifacts status` report, read without writing anything into the project, for the read-only
+ * `artifact_status` MCP tool (#1052, ADR-0018 Decision 3). It runs the same core function as
+ * `artifacts status`, with three differences that ADR-0020, Decision 1 sets for the tool. It never
+ * recovers a pending artifact transaction: it returns the `pending-transaction` report instead,
+ * before it reads any record or resolves any package. With `checkUpdates`, it plans and records no
+ * artifact cache block and resolves through a temporary cache that it removes afterward, as a dry
+ * run does, so `ignoreChanges` and `pointers` are empty. And it never loads the project's
+ * formatter, because it formats nothing.
+ *
+ * @param {{ config: string, checkUpdates?: boolean }} options
+ * @param {ArtifactServices} [services] Only `resolve` and `updateCheckDeadlineMs` are read; the
+ *   formatter is never loaded.
+ */
+export async function readArtifactStatus(options, services = {}) {
+  return artifactStatus(
+    {
+      config: options.config,
+      dryRun: false,
+      artifactAction: "status",
+      checkUpdates: options.checkUpdates,
+    },
+    artifactRegistry(services),
+    async () => {
+      throw new Error("The read-only artifact status report never loads the formatter.");
+    },
+    { readOnly: true, updateCheckDeadlineMs: services.updateCheckDeadlineMs },
+  );
+}
+
+/**
+ * The read-only report while an artifact transaction is pending (ADR-0020, owner decisions 20 and
+ * 23; owner decision of 2026-11-22 on #1052). It is a result, not an error, so the phase function
+ * the report reads now only adds fields. It carries the fields every status report carries,
+ * with no artifacts and `ok: false`, because the records cannot be read yet, and three more:
+ * `phase`; `rollbackFiles`, which lists the project paths the rollback would restore from their
+ * backups or remove, read from the journal without writing, or is null when the journal cannot be
+ * read; and `remedy`, which tells the person to save edits to those files before running
+ * `artifacts status`, which rolls the transaction back. The remedy is fixed text plus a command
+ * built from the recipe's package manager, which only selects a runner from a fixed list, so no
+ * text from the recipe or the journal reaches it; the journal's paths stay in `rollbackFiles`. A
+ * recipe it cannot read only makes the command use the npm runner.
+ *
+ * `artifacts doctor` returns the same report under its own command name (owner decision 20), and
+ * both carry the phase line, an error.
+ *
+ * @param {string} config
+ * @param {"artifacts status" | "artifacts doctor"} commandName
+ * @param {string[] | null} rollbackFiles From the phase function, read from the journal.
+ */
+async function pendingTransactionReport(config, commandName, rollbackFiles) {
+  const { remedy, phaseLineMessage } = await pendingTransactionRemedy(
+    config,
+    commandName,
+    rollbackFiles,
+  );
+  return {
+    command: commandName,
+    dryRun: false,
+    offline: true,
+    updateAllCommand: null,
+    checkUpdatesCommand: null,
+    updateAllBlockedBy: [],
+    ok: false,
+    artifacts: [],
+    ignoreChanges: [],
+    pointers: [],
+    phase: "pending-transaction",
+    rollbackFiles,
+    remedy,
+    // The text output lists the files under this line, and the JSON carries rollbackFiles, so the
+    // line names the files by what the rollback does with them rather than by either.
+    phaseLine: { level: "error", message: phaseLineMessage },
+    phaseNotes: [],
+    formatterFailures: [],
+    managedFilePlanProblem: null,
+    cacheBlockProblem: null,
+  };
+}
+
+/**
+ * What a report says about a pending transaction (ADR-0020, owner decisions 20 and 23): the
+ * `remedy` the JSON carries, which names `rollbackFiles` beside it, and the phase line, which the
+ * text output prints above the list of files, so it names the files by what the rollback does with
+ * them. `doctor` and `artifacts doctor` say "this doctor", the read-only report "this read-only
+ * report". The command is built from the recipe's package manager, which only selects a runner
+ * from a fixed list; a recipe it cannot read only makes the command use the npm runner.
+ *
+ * @param {string} config
+ * @param {"artifacts status" | "artifacts doctor" | "doctor"} commandName
+ * @param {string[] | null} rollbackFiles
+ */
+export async function pendingTransactionRemedy(config, commandName, rollbackFiles) {
+  let recipe = {};
+  try {
+    recipe = await readJson(config);
+  } catch {
+    // A missing or unreadable recipe only changes the runner the command names.
+  }
+  const command = artifactCommand(recipe, config, ["status"]);
+  let files;
+  if (rollbackFiles === null) {
+    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, or the journal fails the rollback's checks, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
+  } else if (rollbackFiles.length === 0) {
+    files = "The rollback restores or removes no file, so run";
+  } else {
+    files = "Save any edits to the files in rollbackFiles first, then run";
+  }
+  const lineFiles =
+    rollbackFiles !== null && rollbackFiles.length > 0
+      ? "Save any edits to the files the rollback restores or removes first, then run"
+      : files;
+  const reader = commandName === "artifacts status" ? "read-only report" : "doctor";
+  /** @param {string} filesText */
+  const sentence = (filesText) =>
+    `An artifact operation stopped before its rollback ran, so this ${reader} does not read the artifact records, because the rollback may still change them. ${filesText}: ${command}. It rolls the transaction back and reports the artifact status.`;
+  return { remedy: sentence(files), phaseLineMessage: sentence(lineFiles) };
+}
+
+/**
+ * The project paths of the files the pending transaction's rollback would restore from their
+ * backups or remove, as `recoverArtifactTransaction` decides it, read without writing, or null
+ * when the journal cannot be read or fails its checks. The read-only status report and the phase
+ * function (ADR-0020, Decision 1) both list them.
+ *
+ * @returns {Promise<string[] | null>}
+ */
+export async function pendingRollbackFiles() {
+  let operations;
+  try {
+    ({ operations } = await readTransactionJournal());
+  } catch {
+    return null;
+  }
+  // The journal check refuses a target that is the project root or that another target equals
+  // (#1193), so every target has its own, non-empty project path.
+  const replaced = [];
+  for (const operation of operations) {
+    if ((await fileExists(operation.backup)) || !operation.hadTarget) {
+      replaced.push(relative(resolve("."), operation.target));
+    }
+  }
+  return replaced;
 }
 
 /**
@@ -244,6 +458,14 @@ export async function prepareArtifactSources(
 ) {
   await recoverArtifactTransaction({ readOnly: dryRun });
   const selections = normalizePackageSelections(recipe.ai);
+  // #1209: apply rebuilds a missing locked package into `.calavera/packages` (`restore`) and writes
+  // the outputs of every selection itself, without an artifact transaction, so a linked folder on
+  // any of those paths stops apply and its dry run before anything is rebuilt, installed, or
+  // written. The install of the unlocked selections checks only its own folders. A recipe without
+  // AI items writes no artifact, so it is not checked.
+  if (resolveAiArtifacts(recipe).length > 0) {
+    await refuseLinkedArtifactFolders(artifactInstallFolders(recipe, selections));
+  }
   const lock = await readLock();
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
   const unlocked = selections.filter(({ id }) => !lockedIds.has(id));
@@ -344,7 +566,14 @@ async function installUnlockedArtifacts(
   }
   const existedBefore = new Set();
   for (const path of [...createdDirectories, ...outputParents]) {
-    if (await fileExists(path)) existedBefore.add(path);
+    // `lstat`, not `fileExists`, so a symbolic link whose target is missing counts as existing,
+    // and the cleanup below never removes a link the person made (#1193).
+    try {
+      await lstat(path);
+      existedBefore.add(path);
+    } catch {
+      // Missing, so this attempt may create it and the cleanup may remove it.
+    }
   }
   let preflightFailed = false;
 
@@ -377,7 +606,9 @@ async function installUnlockedArtifacts(
     const stopped = preflightFailed
       ? `Apply stopped before installing the unlocked artifacts this recipe selects (${ids}) because the recipe's artifacts cannot be applied`
       : `Could not ${dryRun ? "preview installing" : "install"} the unlocked artifacts this recipe selects (${ids})`;
-    const message = `${stopped}, so the artifact lock, artifact outputs, and Calavera state were not changed. ${reason} Review the install with create-project-calavera artifacts install --dry-run.`;
+    // Not "were not changed": under create-here, apply has already recorded the package.json it
+    // created in the state before this step (#1085).
+    const message = `${stopped}, so this step did not change the artifact lock, artifact outputs, or Calavera state. ${reason} Review the install with create-project-calavera artifacts install --dry-run.`;
     if (!dryRun) {
       try {
         if (await fileExists(TRANSACTION_PATH)) await recoverArtifactTransaction();
@@ -443,7 +674,7 @@ async function installUnlockedArtifacts(
  */
 export async function lockedArtifactSources(recipe, dryRun = false, services = {}) {
   await recoverArtifactTransaction({ readOnly: dryRun });
-  const { resolve: resolvePackage, extract: extractPackage } = artifactRegistry(services);
+  const registry = artifactRegistry(services);
   /** @type {Map<string, string>} */
   const sources = new Map();
   /** @type {{ stage: string, finalRoot: string }[]} */
@@ -451,7 +682,7 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
   /** @type {string[]} */
   const temporaryRoots = [];
   const dispose = () =>
-    runCleanups(temporaryRoots.map((root) => () => rm(root, { recursive: true, force: true })));
+    runCleanups(temporaryRoots.map((root) => () => removeTemporaryFolder(root)));
   const restore = async () => {
     for (const { stage, finalRoot } of restores) {
       await rm(finalRoot, { recursive: true, force: true });
@@ -493,26 +724,14 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
         continue;
       }
 
-      const temporaryRoot = await mkdtemp(join(tmpdir(), "calavera-locked-artifact-"));
+      const temporaryRoot = await createTemporaryFolder("calavera-locked-artifact-");
       temporaryRoots.push(temporaryRoot);
-      const stage = join(temporaryRoot, "package");
-      // A dry run resolves through a copy of the cache, so it leaves the project's cache unchanged.
-      const cache = dryRun ? join(temporaryRoot, "cache") : resolve(CACHE_PATH);
-      if (dryRun && (await fileExists(CACHE_PATH))) {
-        await cp(resolve(CACHE_PATH), cache, { recursive: true });
-      }
-      await mkdir(stage, { recursive: true });
-      const resolution = await resolvePackage({
-        id: selection.id,
-        tag: entry.tag,
-        version: entry.version,
-        cache,
-        offline: true,
-      });
-      const extracted = await extractPackage(resolution, stage, packageJson.version);
-      if (extracted.payloadHash !== entry.payloadHash) {
-        throw new Error(`Locked payload hash mismatch for ${selection.id}.`);
-      }
+      const { stage, extracted } = await rebuildLockedPackage(
+        entry,
+        temporaryRoot,
+        dryRun,
+        registry,
+      );
       sources.set(selection.id, extracted.payloadPath);
       if (!dryRun) {
         restores.push({ stage, finalRoot: resolve(PACKAGE_PATH, selection.id, entry.version) });
@@ -524,20 +743,81 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
   return { sources, restore, dispose };
 }
 
-/** @param {ArtifactOptions} options */
-async function migrateRecipe(options) {
-  const recipe = await readJson(options.config);
+/**
+ * Rebuilds the package `entry` locks, offline from the project's artifact cache, into
+ * `temporaryRoot/package`, and checks its payload against the entry's `payloadHash`. A dry run
+ * resolves through a copy of the cache in `temporaryRoot`, so it leaves the project's cache
+ * unchanged. The caller owns `temporaryRoot` and removes it.
+ *
+ * @param {ArtifactLockEntry} entry
+ * @param {string} temporaryRoot An empty folder outside the project.
+ * @param {boolean} dryRun
+ * @param {ArtifactRegistry} registry
+ */
+export async function rebuildLockedPackage(entry, temporaryRoot, dryRun, registry) {
+  const stage = join(temporaryRoot, "package");
+  const cache = dryRun ? join(temporaryRoot, "cache") : resolve(CACHE_PATH);
+  if (dryRun && (await fileExists(CACHE_PATH))) {
+    await cp(resolve(CACHE_PATH), cache, { recursive: true });
+  }
+  await mkdir(stage, { recursive: true });
+  const resolution = await registry.resolve({
+    id: entry.id,
+    tag: entry.tag,
+    version: entry.version,
+    cache,
+    offline: true,
+  });
+  const extracted = await registry.extract(resolution, stage, packageJson.version);
+  if (extracted.payloadHash !== entry.payloadHash) {
+    throw new Error(`Locked payload hash mismatch for ${entry.id}.`);
+  }
+  return { stage, extracted };
+}
+
+/**
+ * @param {ArtifactOptions} options
+ * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the recipe the migration writes.
+ */
+async function migrateRecipe(options, loadFormatter) {
+  const text = await readFile(options.config, "utf8");
+  const recipe = /** @type {Record<string, unknown>} */ (parseJSON(text, options.config));
   if (!Array.isArray(recipe.ai)) return { command: "artifacts migrate", migrated: 0 };
   let migrated = 0;
   const ai = recipe.ai.map((/** @type {unknown} */ item) => {
     if (!item || typeof item !== "object" || Array.isArray(item) || !("src" in item)) return item;
-    const artifact = artifactForLegacyPath(String(item.src));
-    if (!artifact) throw new Error(`Unknown legacy artifact path: ${String(item.src)}.`);
+    // #1024: recipe validation trims a legacy src, so the migration trims it too.
+    const src = String(item.src).trim();
+    const artifact = artifactForLegacyPath(src);
+    if (!artifact) throw new Error(`Unknown legacy artifact path: ${src}.`);
     migrated += 1;
     const target = "target" in item ? item.target : undefined;
     return { id: artifact.id, ...(target ? { target } : {}) };
   });
-  if (!options.dryRun && migrated > 0) await writeAtomicJson(options.config, { ...recipe, ai });
+  if (migrated > 0) {
+    const path = relative(process.cwd(), resolve(options.config));
+    // #1078: the recipe is written back from its parsed value, so a hand-edited recipe can lose a
+    // repeated key or a number's spelling. The migration stops before writing, in a dry run too.
+    // The problem names a line rather than a value, because the recipe records input values. The
+    // check asks the formatter the write below uses, so it judges the spelling that is written.
+    const loss = await rewriteLossProblem(
+      text,
+      path,
+      await generatedJSONFormatter(path, loadFormatter),
+      {
+        withoutValues: true,
+      },
+    );
+    if (loss !== undefined) {
+      throw new Error(
+        `${path} ${loss}. artifacts migrate rewrites the whole recipe to replace each legacy entry, so it stops instead of changing that silently. Edit that line, then run artifacts migrate again.`,
+      );
+    }
+    // #987: formatted as apply formats the recipe (#669), so the Vite+ pre-commit hook leaves it
+    // as written. A dry run formats it too, so it stops where the migration would.
+    const recipeText = await formatRecordText(path, { ...recipe, ai }, loadFormatter);
+    if (!options.dryRun) await writeAtomicText(options.config, recipeText);
+  }
   return {
     command: "artifacts migrate",
     dryRun: options.dryRun,
@@ -548,64 +828,135 @@ async function migrateRecipe(options) {
 
 /**
  * @param {ArtifactOptions} options
- * @param {{ resolve: typeof resolveArtifactPackage }} registry
+ * @param {ArtifactRegistry} registry Resolves update checks and, offline, the cached packages the
+ *   phase function compares unrecorded outputs with.
  * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the state when the cache block is recorded.
+ * @param {{ readOnly?: boolean, updateCheckDeadlineMs?: number }} [mode] With `readOnly`, as
+ *   `readArtifactStatus` runs it, the report plans no cache block and resolves through a temporary
+ *   cache, so it writes nothing. `updateCheckDeadlineMs` bounds each registry lookup (#1138).
  */
-async function artifactStatus(options, registry, loadFormatter) {
-  const recipeFound = await fileExists(options.config);
+async function artifactStatus(
+  options,
+  registry,
+  loadFormatter,
+  { readOnly = false, updateCheckDeadlineMs = UPDATE_CHECK_DEADLINE_MS } = {},
+) {
+  const commandName = /** @type {"artifacts status" | "artifacts doctor"} */ (
+    `artifacts ${options.artifactAction ?? "status"}`
+  );
+  // ADR-0020, Decision 1: the phase function classifies the project first, and writes nothing. The
+  // read-only report runs no project code, so the project's formatter never loads for it (owner
+  // decision 24); the commands load it as apply does.
+  const phase = await deriveProjectPhase({
+    config: options.config,
+    runsProjectCode: !readOnly,
+    registry,
+  });
+  if (phase.phase === "pending-transaction") {
+    // Only artifacts doctor and the read-only report get here: artifacts status recovers the
+    // transaction before it reports (owner decision 20). Nothing is planned, written, or resolved.
+    return pendingTransactionReport(options.config, commandName, phase.rollbackFiles);
+  }
+  const recipeFound = phase.records?.recipe === true;
   const recipe = recipeFound ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
   const selectedIds = new Set(selections.map(({ id }) => id));
   /** @param {string[]} positionals @param {string[]} [flags] */
   const command = (positionals, flags) =>
     artifactCommand(recipe, options.config, positionals, flags);
-  const lock = await readLock();
   const state = await readState();
-  const stateByPath = new Map(state.aiArtifacts.map((item) => [item.path, item]));
-  const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
-  const unlockedSelections = selections.filter(({ id }) => !lockedIds.has(id));
-  // #960: checking for updates resolves every lock entry and unlocked selection through the cache,
-  // so the cache block is written first. A dry run plans it and resolves through a temporary
-  // cache, so it writes nothing.
-  const resolvesPackages = Boolean(
-    options.checkUpdates && lock.artifacts.length + unlockedSelections.length > 0,
-  );
-  const cacheBlock = resolvesPackages
-    ? await planArtifactCacheBlock(
-        state,
-        await artifactCacheIgnoreLines(recipe, { resolvesPackages }),
-        `artifacts ${options.artifactAction} --check-updates`,
-      )
-    : undefined;
+  const lockEntries = phase.artifacts.filter(({ lockEntry }) => lockEntry !== null);
+  // #960: checking for updates resolves every lock entry and unlocked selection through the cache.
+  const resolvesPackages = Boolean(options.checkUpdates && phase.artifacts.length > 0);
+  // ADR-0020, Decision 1: the cache block belongs to a project whose records it joins, so it is
+  // planned and the project's cache used only with a state file, in composed, applied, or drifted.
+  // In any other phase, such as what eject --yes leaves, the report resolves through a temporary
+  // cache, as a dry run does, and writes nothing. A read-only report (#1052) never plans it.
+  const writesCache =
+    !readOnly &&
+    phase.records?.state === true &&
+    ["composed", "applied", "drifted"].includes(phase.phase);
+  // #1209: the update check fills the registry cache in `.calavera/cache` even when the cache block
+  // is already recorded and `commitArtifactCacheBlock` writes nothing, so a linked `.calavera` stops
+  // the report and its dry run here, as it stops an install.
+  if (resolvesPackages && writesCache) await refuseLinkedArtifactFolders([dirname(CACHE_ROOT)]);
+  const cacheBlock =
+    resolvesPackages && writesCache
+      ? await planArtifactCacheBlock(
+          state,
+          await artifactCacheIgnoreLines(recipe, { resolvesPackages }),
+          `artifacts ${options.artifactAction} --check-updates`,
+        )
+      : undefined;
+  // Owner decision of 2026-11-25 on #1112: when the formatter cannot format the state that
+  // records the block, the report writes no block, resolves through a temporary cache, and says
+  // so: a note in artifacts status, which exits 0, and an error in artifacts doctor, which names
+  // the cache block and says it is not a finding about the phase or an artifact (Decision 5).
+  /** @type {string | null} */
+  let cacheBlockProblem = null;
+  /** @type {typeof cacheBlock} */
+  let recordedBlock = cacheBlock;
   if (cacheBlock) {
-    await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
+    // The status report has no field for a folder left behind (#1172), so a staging folder that
+    // stays still stops the report, now with the folder and its remedy (#1136).
+    /** @type {Awaited<ReturnType<typeof commitArtifactCacheBlock>>} */
+    let leftoverFailures = [];
+    try {
+      leftoverFailures = await commitArtifactCacheBlock(
+        cacheBlock,
+        state,
+        loadFormatter,
+        options.dryRun,
+        { reportsFormatFailure: true },
+      );
+    } catch (error) {
+      if (!(error instanceof CacheBlockFormatFailure)) throw error;
+      recordedBlock = undefined;
+      // The formatter failure's own reason names its kind and remedy, so the line stands alone
+      // even when the managed-file check did not run the formatter.
+      cacheBlockProblem = `Calavera did not record the artifact cache block in ${GITIGNORE_PATH}, because the project's formatter could not format ${STATE_PATH}, so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact. ${formatterFailure(STATE_PATH, error.formatterFailure, undefined).reason}`;
+    }
+    if (leftoverFailures.length > 0) {
+      throw errorWithLeftovers(
+        new Error("Calavera could not remove the staging folder of the artifact cache block."),
+        leftoverFailures,
+      );
+    }
   }
   const temporaryCache =
-    resolvesPackages && options.dryRun
+    resolvesPackages && (options.dryRun || !writesCache || cacheBlockProblem !== null)
       ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
       : undefined;
   const cache = temporaryCache ?? resolve(CACHE_PATH);
+  // A failed update check names this command, so a person can retry the same report (#993).
+  const retryCommand = command([options.artifactAction ?? "status"], ["--check-updates"]);
+  // The URLs of the registries that missed a lookup's deadline in this report. The lookups after
+  // that one to the same registry are skipped instead of each waiting (#1138). The URL, path
+  // included, is the key, so two registries on one host are told apart.
+  /** @type {Set<string>} */
+  const silentRegistries = new Set();
   try {
     const artifacts = [];
-    for (const entry of lock.artifacts) {
-      const outputPaths = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
-      const outputs = await Promise.all(
-        outputPaths.map(async (path) => {
-          const managed = stateByPath.get(path);
-          const installed = await fileExists(path);
-          const installedHash = installed
-            ? await hashAiInstall(entry.type, path, entry.target)
-            : null;
-          return {
-            installed,
-            managed: Boolean(managed),
-            locallyEdited: Boolean(installedHash && managed && installedHash !== managed.hash),
-          };
-        }),
+    for (const classified of phase.artifacts) {
+      const { lockEntry: entry, outputs, condition, selected } = classified;
+      if (entry === null) continue;
+      const { latest, updateCheckFailure } = await checkForUpdate(
+        options.checkUpdates,
+        (signal, beforeLookup) =>
+          registry.resolve({ id: entry.id, tag: entry.tag, cache, signal, beforeLookup }),
+        {
+          packageName: entry.package,
+          tag: entry.tag,
+          // `artifacts update` refuses an artifact the recipe does not select.
+          followLatestCommand:
+            entry.tag === "next" && selectedIds.has(entry.id)
+              ? artifactUpdateCommand(recipe, options.config, entry.id, "latest")
+              : null,
+          retryCommand,
+          deadlineMs: updateCheckDeadlineMs,
+          silentRegistries,
+        },
       );
-      const latest = options.checkUpdates
-        ? await registry.resolve({ id: entry.id, tag: entry.tag, cache })
-        : null;
       const updateAvailable = Boolean(latest && latest.version !== entry.version);
       artifacts.push({
         ...entry,
@@ -626,21 +977,41 @@ async function artifactStatus(options, registry, loadFormatter) {
           updateAvailable && selectedIds.has(entry.id)
             ? artifactUpdateCommand(recipe, options.config, entry.id, entry.tag)
             : null,
-        installCommand: null,
+        // #1111: `artifacts install` drops a leftover lock entry, so it is the entry's remedy.
+        installCommand:
+          selected === false && condition.name === "missing" ? command(["install"]) : null,
         // #992: without a recipe, status cannot say which lock entries an install would drop.
-        selected: recipeFound ? selectedIds.has(entry.id) : null,
+        selected,
+        updateCheckFailure,
+        condition,
+        // A lock entry's output without a record is its unrecorded condition, with no note.
+        unrecordedFiles: [],
       });
     }
-    for (const selection of unlockedSelections) {
-      const artifact = artifactForId(selection.id);
-      if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
+    for (const { id, lockEntry, condition, outputs, unrecordedFiles } of phase.artifacts) {
+      if (lockEntry !== null) continue;
+      const selection = /** @type {{ id: string, target?: string }} */ (
+        selections.find((candidate) => candidate.id === id)
+      );
+      const artifact = artifactForId(id);
+      if (!artifact) throw new Error(`Unknown Calavera artifact: ${id}.`);
       const resolvedArtifact = resolveAiArtifacts({ ai: [selection] })[0];
-      if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
-      const latest = options.checkUpdates
-        ? await registry.resolve({ id: selection.id, tag: "latest", cache })
-        : null;
+      if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${id}.`);
+      const { latest, updateCheckFailure } = await checkForUpdate(
+        options.checkUpdates,
+        (signal, beforeLookup) =>
+          registry.resolve({ id, tag: "latest", cache, signal, beforeLookup }),
+        {
+          packageName: artifact.packageName,
+          tag: "latest",
+          followLatestCommand: null,
+          retryCommand,
+          deadlineMs: updateCheckDeadlineMs,
+          silentRegistries,
+        },
+      );
       artifacts.push({
-        id: selection.id,
+        id,
         type: artifact.type,
         package: artifact.packageName,
         version: null,
@@ -651,28 +1022,44 @@ async function artifactStatus(options, registry, loadFormatter) {
         ...(selection.target ? { target: selection.target } : {}),
         destination: resolvedArtifact.path,
         payloadHash: null,
-        installed: false,
-        managed: false,
-        locallyEdited: false,
+        // From the files, as for a lock entry, so the fields agree with the condition: a
+        // selection whose recorded files were edited is installed, managed, and edited.
+        installed: outputs.every(({ installed }) => installed),
+        managed: outputs.every(({ managed }) => managed),
+        locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
         latestVersion: latest?.version ?? null,
         updateAvailable: false,
         releaseNotesUrl: null,
         updateCommand: null,
         installCommand: command(["install"]),
         selected: true,
+        updateCheckFailure,
+        condition,
+        unrecordedFiles: unrecordedFileEntries(id, unrecordedFiles, recipe, options.config),
       });
     }
     // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
     // while every locked selection follows the same channel.
     const selectedChannels = new Set(
-      lock.artifacts.filter(({ id }) => selectedIds.has(id)).map(({ tag }) => tag),
+      lockEntries
+        .map(({ lockEntry }) => /** @type {ArtifactLockEntry} */ (lockEntry))
+        .filter(({ id }) => selectedIds.has(id))
+        .map(({ tag }) => tag),
     );
     // Only a selected artifact has an update command, so an offered `--all` has one channel.
     const [channel] = selectedChannels;
-    const updateAll =
+    const offersUpdateAll =
       selections.length > 1 &&
       selectedChannels.size === 1 &&
       artifacts.some(({ updateCommand }) => updateCommand !== null);
+    // #993: `--all` resolves every selected artifact on the channel and stops at the first lookup
+    // that fails, so it is withheld while a selected artifact's check failed, and status names them.
+    const updateAllBlockedBy = offersUpdateAll
+      ? artifacts
+          .filter(({ id, updateCheckFailure }) => updateCheckFailure && selectedIds.has(id))
+          .map(({ id }) => id)
+      : [];
+    const updateAll = offersUpdateAll && updateAllBlockedBy.length === 0;
     return {
       command: `artifacts ${options.artifactAction}`,
       dryRun: options.dryRun,
@@ -681,16 +1068,400 @@ async function artifactStatus(options, registry, loadFormatter) {
         ? command(["update"], ["--all", ...artifactTagFlags(channel)])
         : null,
       checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
-      ok: artifacts.every(
-        ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,
-      ),
+      updateAllBlockedBy,
+      // ADR-0020, Decisions 4 and 5: artifacts doctor's verdict, which artifacts status reports
+      // too: each artifact's condition, the phase line at the doctors' level, and the managed-file
+      // check's formatter failures and plan problem, which apply stops on (owner decisions 15, 16,
+      // and of 2026-11-25).
+      ok:
+        artifacts.every(isArtifactHealthy) &&
+        phaseLine(phase, { command: "artifacts doctor", recipe, config: options.config }).level !==
+          "error" &&
+        phase.formatterFailures.length === 0 &&
+        phase.managedFilePlanProblem === null &&
+        cacheBlockProblem === null,
       artifacts,
-      ignoreChanges: cacheBlock?.changes ?? [],
-      pointers: artifactCachePointers(cacheBlock?.changes ?? []),
+      ignoreChanges: recordedBlock?.changes ?? [],
+      pointers: artifactCachePointers(recordedBlock?.changes ?? []),
+      phase: phase.phase,
+      phaseLine: phaseLine(phase, {
+        command: commandName,
+        recipe,
+        config: options.config,
+        readOnly,
+      }),
+      phaseNotes: phaseNotes(phase),
+      formatterFailures: phase.formatterFailures,
+      managedFilePlanProblem: phase.managedFilePlanProblem,
+      cacheBlockProblem,
     };
   } finally {
     if (temporaryCache) await rm(temporaryCache, { recursive: true, force: true });
   }
+}
+
+/**
+ * The project's formatter could not format the state that records the artifact cache block, so
+ * the block was not written. Nothing was written when this is thrown. It keeps the formatter
+ * failure as its cause, whose kind words the report; the report never quotes the failure's
+ * message, which can quote a setting from the person's `.editorconfig`.
+ */
+class CacheBlockFormatFailure extends Error {
+  /** @param {FormatterFailure} cause */
+  constructor(cause) {
+    super(
+      "The project's formatter could not format the state that records the artifact cache block.",
+      { cause },
+    );
+    this.name = "CacheBlockFormatFailure";
+    this.formatterFailure = cause;
+  }
+}
+
+/**
+ * A registry lookup that missed its deadline (#1138). Status creates it, so the report can tell it
+ * apart from a registry error that merely carries the same code.
+ */
+class UpdateCheckTimeout extends Error {
+  /** @param {number} deadlineMs */
+  constructor(deadlineMs) {
+    super(`The registry did not answer within ${deadlineMs} ms.`);
+    this.name = "UpdateCheckTimeout";
+    this.code = "ELOOKUPTIMEOUT";
+    this.deadlineMs = deadlineMs;
+  }
+}
+
+/**
+ * A lookup that status did not send, because an earlier lookup to the same registry missed its
+ * deadline in this report (#1138).
+ */
+class UpdateCheckSkipped extends Error {
+  /** @param {string} registryOrigin @param {number} deadlineMs */
+  constructor(registryOrigin, deadlineMs) {
+    super(
+      `The registry ${registryOrigin} did not answer an earlier lookup within ${deadlineMs} ms.`,
+    );
+    this.name = "UpdateCheckSkipped";
+    this.code = "ELOOKUPSKIPPED";
+    this.registryOrigin = registryOrigin;
+    this.deadlineMs = deadlineMs;
+  }
+}
+
+/**
+ * The npm configuration notes of a lookup that missed its deadline. Artifact-core attaches them
+ * to the error the aborted request ends with, which usually arrives within the same turn of the
+ * event loop as the abort. The lookup gets until the next turn, so a lookup that ignores the
+ * abort cannot hold the report; it then has no notes.
+ *
+ * @param {Promise<unknown>} pending
+ */
+async function abortedLookupNotes(pending) {
+  const late = await Promise.race([
+    pending.then(
+      () => undefined,
+      (/** @type {unknown} */ error) => error,
+    ),
+    new Promise((done) => setImmediate(() => done(undefined))),
+  ]);
+  const fields = /** @type {{ npmDiagnostics?: unknown, unsetVariables?: unknown }} */ (late ?? {});
+  return {
+    npmDiagnostics: notesList(fields.npmDiagnostics),
+    unsetVariables: notesList(fields.unsetVariables),
+  };
+}
+
+/**
+ * Asks the registry for the release on an artifact's channel when update checks are on. A failed
+ * registry lookup is reported for that artifact alone, so the others still get a status (#993).
+ * Each lookup is held to `context.deadlineMs` with the version notice's deadline and abort
+ * (ADR-0019 Decision 2): at the deadline the lookup's signal is aborted, which ends pacote's
+ * request, and the artifact is reported as ELOOKUPTIMEOUT, even if the lookup ignores the abort.
+ * The lookup names its registry through `beforeLookup` before it sends a request. Once a lookup to
+ * a registry times out, the registry's URL joins `context.silentRegistries`, and each later lookup
+ * to that URL is stopped there and reported as ELOOKUPSKIPPED, with the same remedy, so the report
+ * waits for one deadline per silent registry instead of one per artifact. The URL includes the
+ * path, so a registry on the same host under another path is still checked. A lookup that never
+ * names its registry, such as a test stand-in, is never skipped.
+ * Only an error whose `code` names a registry, network, timeout, or TLS failure is reported this
+ * way (see REGISTRY_LOOKUP_CODE). Every other error stops the report as before: Calavera's own,
+ * which carry no code and say what to fix (an invalid npm configuration, a package whose identity
+ * or integrity does not match, a lock entry with an unknown id or tag), and local file system or
+ * Node errors, such as a cache folder Calavera cannot write. The report keeps a registry
+ * error's `code`, `statusCode`, and the npm configuration notes Calavera adds, but never the
+ * registry's message, because that is raw registry text, which can hold the request URL and
+ * response details.
+ *
+ * @template {{ version: string }} T
+ * @param {boolean | undefined} checkUpdates
+ * @param {(signal: AbortSignal, beforeLookup: (registry: { origin: string, url: string }) => void) => Promise<T>} lookup
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string, deadlineMs: number, silentRegistries: Set<string> }} context
+ * @returns {Promise<{ latest: T | null, updateCheckFailure: import("./artifact-status-report.js").UpdateCheckFailure | null }>}
+ */
+async function checkForUpdate(checkUpdates, lookup, context) {
+  if (!checkUpdates) return { latest: null, updateCheckFailure: null };
+  /** @type {Promise<T> | undefined} */
+  let pending;
+  /** @type {{ origin: string, url: string } | undefined} */
+  let lookupRegistry;
+  /** @param {{ origin: string, url: string }} registry */
+  const beforeLookup = (registry) => {
+    lookupRegistry = registry;
+    if (context.silentRegistries.has(registry.url)) {
+      throw new UpdateCheckSkipped(registry.origin, context.deadlineMs);
+    }
+  };
+  try {
+    const latest = await withDeadline(
+      context.deadlineMs,
+      () => new UpdateCheckTimeout(context.deadlineMs),
+      (signal) => (pending = lookup(signal, beforeLookup)),
+    );
+    return { latest, updateCheckFailure: null };
+  } catch (error) {
+    if (error instanceof UpdateCheckSkipped) {
+      return { latest: null, updateCheckFailure: lookupSkippedFailure(error, context) };
+    }
+    if (error instanceof UpdateCheckTimeout) {
+      if (lookupRegistry) context.silentRegistries.add(lookupRegistry.url);
+      // withDeadline calls the lookup before its deadline can pass, so `pending` is set.
+      const notes = await abortedLookupNotes(/** @type {Promise<T>} */ (pending));
+      return { latest: null, updateCheckFailure: lookupTimeoutFailure(error, notes, context) };
+    }
+    const failure = updateCheckFailure(error, context);
+    if (!failure) throw error;
+    return { latest: null, updateCheckFailure: failure };
+  }
+}
+
+// The codes of a failed registry lookup: an HTTP answer (npm-registry-fetch sets `E<status>`, or
+// EOTP and EAUTHIP for some 401s), a missing version (ETARGET), a package document artifact-core
+// could not read (EBADPACKUMENT), a redirect artifact-core refused to follow (EINSECUREREDIRECT,
+// #1207), a fetch failure or abort
+// (minipass-fetch), a proxy or timeout failure (@npmcli/agent), and DNS, socket, and TLS failures
+// from Node. A local file system code, such as EACCES or ENOSPC from the cache, is not one.
+const REGISTRY_LOOKUP_CODE = new RegExp(
+  [
+    "^E\\d{3}$",
+    "^(EOTP|EAUTHIP|ETARGET|EBADPACKUMENT|EINSECUREREDIRECT|FETCH_ERROR|FETCH_ABORTED|EINVALIDPROXY)$",
+    "^E(CONNECTION|IDLE|RESPONSE|TRANSFER)TIMEOUT$",
+    "^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)$",
+    "^(CERT_|UNABLE_TO_|SELF_SIGNED_|DEPTH_ZERO_SELF_SIGNED_|ERR_TLS_|ERR_SSL_)",
+  ].join("|"),
+);
+
+// minipass-fetch keeps FETCH_ERROR as the code and names the kind of failure, such as
+// request-timeout or invalid-json, in `type`. Only a short identifier is kept.
+const FETCH_ERROR_TYPE = /^[a-z-]{1,32}$/;
+
+/**
+ * Artifact-core's registry errors carry these notes as string arrays; any other error has none.
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function notesList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * An origin (protocol, host, and port) as artifact-core reports it, or null for anything else.
+ *
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function originField(value) {
+  return typeof value === "string" && URL.canParse(value) && new URL(value).origin === value
+    ? value
+    : null;
+}
+
+/**
+ * The origin of an http or https URL, or null; the path and query, which can carry a token, are
+ * dropped.
+ *
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function uriOrigin(value) {
+  if (typeof value !== "string" || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  return /^https?:$/.test(url.protocol) ? url.origin : null;
+}
+
+/**
+ * The report of a lookup that missed its deadline (#1138). It has no HTTP status or origin,
+ * because the registry never answered.
+ *
+ * @param {UpdateCheckTimeout} timeout
+ * @param {{ npmDiagnostics: string[], unsetVariables: string[] }} notes
+ * @param {{ packageName: string, retryCommand: string }} context
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure}
+ */
+function lookupTimeoutFailure(timeout, notes, { packageName, retryCommand }) {
+  return {
+    code: timeout.code,
+    statusCode: null,
+    reason: `the registry did not answer the lookup for ${packageName} within ${timeout.deadlineMs} ms`,
+    remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
+    type: null,
+    origin: null,
+    ...notes,
+  };
+}
+
+/**
+ * The report of a lookup that status skipped after an earlier lookup to the same registry missed
+ * its deadline (#1138). It has the timeout's remedy, and no npm configuration notes, because the
+ * timed-out artifact already reports them.
+ *
+ * @param {UpdateCheckSkipped} skipped
+ * @param {{ packageName: string, retryCommand: string }} context
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure}
+ */
+function lookupSkippedFailure(skipped, { packageName, retryCommand }) {
+  return {
+    code: skipped.code,
+    statusCode: null,
+    reason: `Calavera did not look up ${packageName}, because the registry ${skipped.registryOrigin} did not answer an earlier lookup within ${skipped.deadlineMs} ms`,
+    remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
+    type: null,
+    origin: null,
+    npmDiagnostics: [],
+    unsetVariables: [],
+  };
+}
+
+/**
+ * The report of a failed registry lookup, or undefined for an error that is not one.
+ *
+ * @param {unknown} error
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string }} context
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure | undefined}
+ */
+function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
+  const fields =
+    /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, origin?: unknown, setting?: unknown, layer?: unknown, registryOrigin?: unknown, uri?: unknown, cause?: { distTags?: unknown, uri?: unknown } }} */ (
+      error ?? {}
+    );
+  if (typeof fields.code !== "string" || !REGISTRY_LOOKUP_CODE.test(fields.code)) return undefined;
+  const code = fields.code;
+  const statusCode = typeof fields.statusCode === "number" ? fields.statusCode : null;
+  const type =
+    typeof fields.type === "string" && FETCH_ERROR_TYPE.test(fields.type) ? fields.type : null;
+  // ADR-0021: the origin that answered an HTTP failure, or null for a failure without one.
+  // artifact-core sets `origin` on a 401 or 403; npm-registry-fetch sets `uri` on every HTTP
+  // error, kept on the cause when the loader's notes wrap it. Only its origin is kept.
+  const origin =
+    statusCode === null
+      ? null
+      : (originField(fields.origin) ?? uriOrigin(fields.uri) ?? uriOrigin(fields.cause?.uri));
+  const notes = {
+    type,
+    origin,
+    npmDiagnostics: notesList(fields.npmDiagnostics),
+    unsetVariables: notesList(fields.unsetVariables),
+  };
+  // npm-pick-manifest throws ETARGET when no version matches the spec, and status always asks for
+  // a dist-tag. It also throws ETARGET when the tag names a version the package document does not
+  // list yet, so the package's tags tell the two apart. The npm configuration notes wrap the error
+  // and keep the tags on its cause.
+  if (code === "ETARGET") {
+    const distTags = fields.distTags ?? fields.cause?.distTags;
+    const hasTag = Object.hasOwn(Object(distTags), tag);
+    return hasTag
+      ? {
+          code,
+          statusCode,
+          reason: `npm's ${tag} tag for ${packageName} names a version the registry does not list yet`,
+          remedy: `Wait a few minutes for the registry to list it, then run: ${retryCommand}`,
+          ...notes,
+        }
+      : {
+          code,
+          statusCode,
+          reason: `npm has no ${tag} tag for ${packageName}, so Calavera could not check for an update on that channel`,
+          remedy: followLatestCommand
+            ? `To follow latest instead, run: ${followLatestCommand}`
+            : null,
+          ...notes,
+        };
+  }
+  if (code === "EINSECUREREDIRECT") {
+    return { code, statusCode, ...refusedRedirect(error, packageName, retryCommand), ...notes };
+  }
+  const kind = type === null ? code : `${code} ${type}`;
+  const details = statusCode === null ? kind : `${kind}, HTTP ${statusCode}`;
+  // npm-registry-fetch sets `statusCode` on every HTTP error, while its `code` is EOTP or EAUTHIP
+  // for some 401 answers, so the status picks the remedy. Calavera sends no credentials
+  // (ADR-0021), so a 401 or 403 says so and points at the setting that chose the registry.
+  if (statusCode === 401 || statusCode === 403) {
+    const registryOrigin = originField(fields.registryOrigin);
+    let reason = `the registry lookup for ${packageName} failed (${details}), and Calavera sends no credentials to any registry`;
+    if (origin !== null && (registryOrigin === null || origin === registryOrigin)) {
+      reason = `the registry ${origin} answered ${statusCode} (${code}), and Calavera sends no credentials to any registry`;
+    } else if (origin !== null) {
+      reason = `the host ${origin} answered ${statusCode} (${code}) for a lookup that started at the registry ${registryOrigin}, and Calavera sends no credentials to any registry or host`;
+    }
+    const setting =
+      typeof fields.setting === "string" && typeof fields.layer === "string"
+        ? `${fields.setting} in the ${fields.layer}`
+        : "the registry setting";
+    return {
+      code,
+      statusCode,
+      reason,
+      remedy: `If this registry requires authentication, point ${setting} at a registry that serves Calavera's packages without authentication, then run: ${retryCommand}`,
+      ...notes,
+    };
+  }
+  let check = "the network connection and the npm registry settings";
+  if (statusCode === 404) {
+    check = `that the npm registry settings point at a registry that publishes ${packageName}`;
+  }
+  return {
+    code,
+    statusCode,
+    reason: `the registry lookup for ${packageName} failed (${details})`,
+    remedy: `Check ${check}, then run: ${retryCommand}`,
+    ...notes,
+  };
+}
+
+/**
+ * The reason and remedy for a redirect artifact-core refused (#1207). artifact-core sets
+ * `protocol` and `otherHost` on its refusal, or on the cause when its npm configuration notes
+ * wrap it. Only the exact values artifact-core writes are read, so no other text, such as a URL,
+ * reaches the report.
+ *
+ * @param {unknown} error
+ * @param {string} packageName
+ * @param {string} retryCommand
+ */
+function refusedRedirect(error, packageName, retryCommand) {
+  const fields =
+    /** @type {{ protocol?: unknown, otherHost?: unknown, cause?: { protocol?: unknown, otherHost?: unknown } }} */ (
+      error ?? {}
+    );
+  const refusal = fields.otherHost === undefined && fields.cause ? fields.cause : fields;
+  const https =
+    "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http";
+  let redirected = "was redirected to plain http on a host that is not loopback";
+  let remedy = https;
+  if (refusal.otherHost === true) {
+    redirected = "was redirected over plain http to a host other than the registry's own";
+    // Only the person's own user configuration or environment may name a plain-http registry
+    // (#1185, #1186).
+    remedy =
+      "Point the npm registry settings at an https registry, or at a plain-http registry in your own user configuration or environment that does not redirect lookups to another host";
+  } else if (refusal.protocol === "https:") {
+    redirected = "was redirected from https to plain http on a host that is not loopback";
+  }
+  return {
+    reason: `the registry lookup for ${packageName} ${redirected}, which Calavera does not follow`,
+    remedy: `${remedy}, then run: ${retryCommand}`,
+  };
 }
 
 /**
@@ -705,18 +1476,43 @@ async function artifactStatus(options, registry, loadFormatter) {
  * @param {ReturnType<typeof createEmptyState>} state
  * @param {() => Promise<ProjectFormatter>} loadFormatter
  * @param {boolean} dryRun
+ * @param {{ reportsFormatFailure?: boolean }} [options] With `reportsFormatFailure`, as the status
+ *   report passes it, a formatter that cannot format the state stops with a
+ *   `CacheBlockFormatFailure`, so the report can name it and go on (owner decision of 2026-11-25).
+ * @returns {Promise<unknown[]>} Each failure to remove the transaction's staging folder after the
+ *   block committed, for `temporaryFolderLeftovers`.
  */
-async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun) {
-  if (!cacheBlock.writesState) return;
-  const stateText = await formatRecordText(
-    STATE_PATH,
-    { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
-    loadFormatter,
-  );
-  if (dryRun) return;
+async function commitArtifactCacheBlock(
+  cacheBlock,
+  state,
+  loadFormatter,
+  dryRun,
+  { reportsFormatFailure = false } = {},
+) {
+  if (!cacheBlock.writesState) return [];
+  let stateText;
+  try {
+    stateText = await formatRecordText(
+      STATE_PATH,
+      { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
+      loadFormatter,
+    );
+  } catch (error) {
+    // Nothing is written yet, so a report can name the failure instead of stopping on it. The
+    // commands that change artifacts stop with the formatter's own error, as apply does (#838).
+    // Only a formatter failure is reported; any other error still stops the report, so its
+    // cause stays diagnosable.
+    throw reportsFormatFailure && error instanceof FormatterFailure
+      ? new CacheBlockFormatFailure(error)
+      : error;
+  }
+  if (dryRun) return [];
+  // #1193: the state, the journal, and the staging folder all lie in `.calavera`.
+  await refuseLinkedArtifactFolders([TRANSACTION_ROOT]);
   const stagingRoot = resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
   const stagedState = join(stagingRoot, "records", "state.json");
   const stagedGitignore = join(stagingRoot, "records", "gitignore");
+  const removeStaging = () => removeTemporaryFolder(stagingRoot);
   let commitStarted = false;
   try {
     await mkdir(dirname(stagedState), { recursive: true });
@@ -731,12 +1527,17 @@ async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun
         : []),
       { staged: stagedState, target: resolve(STATE_PATH) },
     ]);
-  } finally {
-    // A commit that failed part way leaves its journal and staging for recovery.
+  } catch (error) {
+    // A commit that failed part way leaves its journal and staging for recovery. Otherwise the
+    // staging folder is removed, and a folder that stays is named after the failure that stopped
+    // the command, with its remedy (#1136).
     if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
-      await rm(stagingRoot, { recursive: true, force: true });
+      throw errorWithLeftovers(error, await cleanupFailures([removeStaging]));
     }
+    throw error;
   }
+  // #1136: the block has committed, so a staging folder that stays is reported, not an error.
+  return cleanupFailures([removeStaging]);
 }
 
 /**
@@ -747,6 +1548,12 @@ async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun
  */
 async function installArtifacts(options, updating, registry, loadFormatter) {
   const recipe = await readJson(options.config);
+  // #1137: validated first, as apply validates it, so the command refuses every recipe apply
+  // refuses, with apply's message, before anything is written or resolved. That includes an
+  // unknown id or legacy src, which the message names by its position, and a legacy entry that
+  // selects an artifact needing wiring or inputs (#1125).
+  validateRecipe(recipe);
+  assertNoLegacyEntryNeedsWiring(recipe.ai);
   const selections = normalizeSelections(recipe.ai);
   const currentLock = await readLock();
   const lockedById = new Map(currentLock.artifacts.map((entry) => [entry.id, entry]));
@@ -769,6 +1576,17 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
   // `normalizeSelections` maps the recipe's `ai` items one to one, so an index marks both.
   const staged = selections.map(({ id }) => requestedIds.has(id) || lockedById.has(id));
   const command = updating ? "artifacts update" : "artifacts install";
+  const stagedRecipe = Array.isArray(recipe.ai)
+    ? {
+        ...recipe,
+        ai: recipe.ai.filter(
+          (/** @type {unknown} */ _item, /** @type {number} */ index) => staged[index],
+        ),
+      }
+    : recipe;
+  const stagedSelections = selections.filter((_selection, index) => staged[index]);
+  // #1193: a linked folder stops the command before the cache block below writes anything.
+  await refuseLinkedArtifactFolders(artifactInstallFolders(stagedRecipe, stagedSelections));
   // #960: the cache block is planned and committed before anything resolves, so an edited block
   // stops the command before the registry fills the cache, and a cache the registry fills is
   // ignored even when the install fails afterwards. The install then reads the recorded block
@@ -779,17 +1597,15 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     await artifactCacheIgnoreLines(recipe),
     command,
   );
-  await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
+  const leftoverFailures = await commitArtifactCacheBlock(
+    cacheBlock,
+    state,
+    loadFormatter,
+    options.dryRun,
+  );
   const result = await stageArtifactInstall(
-    Array.isArray(recipe.ai)
-      ? {
-          ...recipe,
-          ai: recipe.ai.filter(
-            (/** @type {unknown} */ _item, /** @type {number} */ index) => staged[index],
-          ),
-        }
-      : recipe,
-    selections.filter((_selection, index) => staged[index]),
+    stagedRecipe,
+    stagedSelections,
     {
       lockedById,
       advanceIds: updating ? requestedIds : new Set(),
@@ -799,8 +1615,15 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
       loadFormatter,
     },
     registry,
-  );
-  await result.dispose();
+  ).catch((error) => {
+    // #1136: a staging folder the cache block left is named after the failure, with its remedy.
+    throw errorWithLeftovers(error, leftoverFailures);
+  });
+  // #1136: the install has committed, or the dry run has finished, here, so a staging folder the
+  // command cannot remove is reported with its remedy, as apply reports it (#1033), and the
+  // command still finishes.
+  leftoverFailures.push(...(await cleanupFailures([result.dispose])));
+  const leftoverFolders = temporaryFolderLeftovers(leftoverFailures);
   return {
     command,
     dryRun: options.dryRun,
@@ -815,6 +1638,7 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     pointers: artifactCachePointers(cacheBlock.changes),
     registries: result.registries,
     warnings: result.warnings,
+    temporaryFolderLeftovers: leftoverFolders,
   };
 }
 
@@ -835,13 +1659,14 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
  */
 async function stageArtifactInstall(recipe, selections, plan, registry) {
   const { lockedById, advanceIds, artifactTag, dryRun, loadFormatter } = plan;
-  // A project whose formatter cannot load stops the dry run and the install alike, before
-  // anything is resolved or staged.
+  // A project whose formatter cannot load, or that links a folder the install writes into
+  // (#1193), stops the dry run and the install alike, before anything is resolved or staged.
   await loadFormatter();
+  await refuseLinkedArtifactFolders(artifactInstallFolders(recipe, selections));
   const stagingRoot = dryRun
-    ? await mkdtemp(join(tmpdir(), "calavera-artifact-stage-"))
+    ? await createTemporaryFolder("calavera-artifact-stage-")
     : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
-  const dispose = () => rm(stagingRoot, { recursive: true, force: true });
+  const dispose = () => removeTemporaryFolder(stagingRoot);
   /** @type {Map<string, string>} */
   const sourcePaths = new Map();
   /** @type {ArtifactLockEntry[]} */
@@ -888,16 +1713,13 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
     const state = await readState();
     const outputRoot = join(stagingRoot, "outputs");
     const applied = await buildAiApplyResult(recipe, { dryRun, outputRoot }, state, sourcePaths);
-    const paths = new Set(applied.artifacts.map(({ path }) => path));
     // #838: formatted in the dry run as well, so the dry run stops where the install would.
     const stateText = await formatRecordText(
       STATE_PATH,
       {
         ...state,
-        aiArtifacts: [
-          ...state.aiArtifacts.filter(({ path }) => !paths.has(path)),
-          ...applied.artifacts,
-        ],
+        // #1139: the order apply writes, so a run that changes nothing leaves the state unchanged.
+        aiArtifacts: mergeInstalledAiArtifacts(state.aiArtifacts, applied.artifacts),
       },
       loadFormatter,
     );
@@ -922,7 +1744,9 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
           target: resolve(PACKAGE_PATH, selection.id, entry.version),
         };
       });
-      const changedPaths = new Set(applied.changes.map(({ path }) => path));
+      const changedPaths = new Set(
+        applied.changes.filter(({ type }) => type !== "unchanged").map(({ path }) => path),
+      );
       for (const artifact of resolveAiArtifacts(recipe, sourcePaths)) {
         const outputPaths = aiArtifactOutputPaths(artifact);
         if (!outputPaths.some((path) => changedPaths.has(path))) continue;
@@ -954,7 +1778,8 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
   } catch (error) {
     // A commit that failed part way leaves its journal and staging for recovery.
     if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
-      throw await errorAfterCleanups(error, [dispose]);
+      // #1136: a folder that stays is named after the failure, with its remedy, as apply does.
+      throw errorWithLeftovers(error, await cleanupFailures([dispose]));
     }
     throw error;
   }
@@ -989,7 +1814,8 @@ function normalizeSelections(ai) {
       "id" in item
         ? artifactForId(String(item.id))
         : "src" in item
-          ? artifactForLegacyPath(String(item.src))
+          ? // #1024: recipe validation trims a legacy src, so a selection trims it too.
+            artifactForLegacyPath(String(item.src).trim())
           : undefined;
     if (!artifact) throw new Error("Unknown artifact selection.");
     assertFirstSelection(firstIndexById, artifact.id, index);
@@ -999,14 +1825,14 @@ function normalizeSelections(ai) {
 }
 
 /** @returns {Promise<{ schemaVersion: number, artifacts: ArtifactLockEntry[] }>} */
-async function readLock() {
+export async function readLock() {
   if (!(await fileExists(LOCK_PATH))) return { schemaVersion: 1, artifacts: [] };
   const lock = await readJson(LOCK_PATH);
   if (!Array.isArray(lock.artifacts)) throw new Error("Invalid artifact lockfile.");
   return /** @type {{ schemaVersion: number, artifacts: ArtifactLockEntry[] }} */ (lock);
 }
 
-async function readState() {
+export async function readState() {
   return (await fileExists(STATE_PATH))
     ? normalizeState(await readJson(STATE_PATH))
     : createEmptyState();
@@ -1014,23 +1840,30 @@ async function readState() {
 
 /** @param {string} path @returns {Promise<Record<string, unknown>>} */
 async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
+  return /** @type {Record<string, unknown>} */ (await readJSON(path));
 }
 
 /** @param {string} path @param {unknown} value */
 async function writeAtomicJson(path, value) {
+  await writeAtomicText(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/** @param {string} path @param {string} text */
+async function writeAtomicText(path, text) {
   const absolute = resolve(path);
   await mkdir(dirname(absolute), { recursive: true });
   const temporary = `${absolute}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  await writeFile(temporary, text, { flag: "wx" });
   await rename(temporary, absolute);
 }
 
 /**
- * The text the artifact transaction commits as the record at `path`: `value` as JSON, formatted by
- * the project's formatter, so the Vite+ pre-commit hook leaves the committed file as written (#838).
+ * The text an artifact command writes as the JSON file at `path`, such as the state and lock the
+ * artifact transaction commits (#838) or the recipe `artifacts migrate` rewrites (#987): `value` as
+ * JSON, formatted by the project's formatter, so the Vite+ pre-commit hook leaves the committed file
+ * as written.
  *
- * @param {string} path The project path of the record, which picks the formatter's settings.
+ * @param {string} path The project path of the file, which picks the formatter's settings.
  * @param {unknown} value
  * @param {() => Promise<ProjectFormatter>} loadFormatter
  * @returns {Promise<string>}
@@ -1039,19 +1872,66 @@ async function formatRecordText(path, value, loadFormatter) {
   return formatGeneratedText(path, `${JSON.stringify(value, null, 2)}\n`, loadFormatter);
 }
 
-/** @param {string} parent @param {string} child */
-function isInside(parent, child) {
-  const path = relative(parent, child);
-  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+/**
+ * The project files an artifact transaction may target (#1193). The two callers of
+ * `commitArtifactTransaction` write them: `commitArtifactCacheBlock` targets `.gitignore` and the
+ * state, and `stageArtifactInstall` the state, the lock, and `.coderabbit.yaml`.
+ */
+const TRANSACTION_TARGET_FILES = Object.freeze([
+  GITIGNORE_PATH,
+  STATE_PATH,
+  LOCK_PATH,
+  CODE_RABBIT_CONFIG_PATH,
+]);
+
+/**
+ * The project folders an artifact transaction may target paths strictly below, never the folder
+ * itself (#1193): `stageArtifactInstall` targets package folders and AI artifact outputs.
+ */
+const TRANSACTION_TARGET_FOLDERS = Object.freeze([PACKAGE_PATH, ...AI_ARTIFACT_OUTPUT_FOLDERS]);
+
+/**
+ * Whether an artifact transaction may target the absolute path `target` in the project at
+ * `projectRoot`: one of `TRANSACTION_TARGET_FILES`, or a path strictly below one of
+ * `TRANSACTION_TARGET_FOLDERS`. The project root, its parent folders, and the target folders
+ * themselves are never targets, and neither is a path with a segment that ends in a space or a
+ * dot. Paths are compared with `relative`, as `isPathInside` does, so a path that differs only in
+ * letter case on Windows counts as the same path.
+ *
+ * @param {string} projectRoot
+ * @param {string} target
+ * @param {Pick<typeof nodePath, "join" | "relative" | "isAbsolute" | "sep">} [pathRules] The
+ *   platform's path rules; tests pass `path.win32`.
+ */
+export function isTransactionTarget(projectRoot, target, pathRules = nodePath) {
+  const samePath = (/** @type {string} */ path) => pathRules.relative(path, target) === "";
+  // Windows strips a trailing space or dot from each path segment, so such a segment would name
+  // another path there; it is refused on every platform, so a journal is read the same way
+  // everywhere. No catalog path ends a segment that way.
+  const segments = pathRules.relative(projectRoot, target).split(pathRules.sep);
+  if (segments.some((segment) => segment.endsWith(" ") || segment.endsWith("."))) return false;
+  return (
+    TRANSACTION_TARGET_FILES.some((file) => samePath(pathRules.join(projectRoot, file))) ||
+    TRANSACTION_TARGET_FOLDERS.some((folder) => {
+      const root = pathRules.join(projectRoot, folder);
+      return !samePath(root) && isPathInside(root, target, pathRules);
+    })
+  );
 }
+
+/**
+ * Ends each message that refuses a journal, because `apply`, every `artifacts` command, and
+ * `eject` recover the journal first and stay blocked until it is gone.
+ */
+const JOURNAL_REFUSAL_REMEDY = `Calavera does not roll this journal back. Restore the files it names by hand if needed, using the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`;
 
 /**
  * Moves each staged path to its target through a journal that
  * `recoverArtifactTransaction` rolls back. Refuses, before anything moves, a
  * transaction root outside `.calavera/.transactions`, and an operation whose
  * staged path is outside the transaction root or missing, whose target is
- * outside the project, or whose target an earlier operation already names,
- * each with its own message.
+ * outside the project or not a path a transaction may target, or whose target
+ * an earlier operation already names, each with its own message.
  *
  * @param {string} transactionRoot
  * @param {{ staged: string, target: string }[]} operations
@@ -1059,7 +1939,7 @@ function isInside(parent, child) {
 export async function commitArtifactTransaction(transactionRoot, operations) {
   const projectRoot = resolve(".");
   const normalizedRoot = resolve(transactionRoot);
-  if (!isInside(resolve(TRANSACTION_ROOT), normalizedRoot)) {
+  if (!isPathInside(resolve(TRANSACTION_ROOT), normalizedRoot)) {
     throw new Error(
       `The artifact transaction root ${normalizedRoot} is outside ${resolve(TRANSACTION_ROOT)}.`,
     );
@@ -1070,14 +1950,19 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
   for (const [index, operation] of operations.entries()) {
     const staged = resolve(operation.staged);
     const target = resolve(operation.target);
-    if (!isInside(normalizedRoot, staged)) {
+    if (!isPathInside(normalizedRoot, staged)) {
       throw new Error(
         `Artifact transaction operation ${index} stages ${staged}, which is outside the transaction root ${normalizedRoot}.`,
       );
     }
-    if (!isInside(projectRoot, target)) {
+    if (!isPathInside(projectRoot, target)) {
       throw new Error(
         `Artifact transaction operation ${index} targets ${target}, which is outside the project ${projectRoot}.`,
+      );
+    }
+    if (!isTransactionTarget(projectRoot, target)) {
+      throw new Error(
+        `Artifact transaction operation ${index} targets ${target}, which is not a path an artifact transaction writes.`,
       );
     }
     const earlier = seenTargets.get(target);
@@ -1085,6 +1970,15 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
       throw new Error(
         `Artifact transaction operations ${earlier} and ${index} both target ${target}.`,
       );
+    }
+    // Recovery refuses nested targets, and targets that differ only in letter case or Unicode
+    // normalization, so a commit that wrote them could never be rolled back.
+    for (const [other, otherIndex] of seenTargets) {
+      if (pathsOverlap(other, target)) {
+        throw new Error(
+          `Artifact transaction operations ${otherIndex} and ${index} target ${other} and ${target}, the same path or one inside the other.`,
+        );
+      }
     }
     if (!(await fileExists(staged))) {
       throw new Error(
@@ -1098,6 +1992,15 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
       backup: join(normalizedRoot, "backups", String(index)),
       hadTarget: await fileExists(target),
     });
+  }
+
+  const linked = await linkedJournalPath(projectRoot, normalizedRoot, journalOperations);
+  if (linked?.error) throw linked.error;
+  if (linked?.link) throw new Error(linkedFolderRefusal(linked.link));
+  // #1174: what each move puts at its target, so the rollback can tell an edit made since. It is
+  // read after the link check, so it never reads through a refused link.
+  for (const operation of journalOperations) {
+    Object.assign(operation, { writtenHash: await writtenFingerprint(operation.staged) });
   }
 
   await writeAtomicJson(TRANSACTION_PATH, {
@@ -1116,12 +2019,232 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
   await rm(TRANSACTION_PATH, { force: true });
 }
 
-/** @param {{ readOnly?: boolean }} [options] */
-async function recoverArtifactTransaction(options = {}) {
+/**
+ * Rolls back an artifact transaction that an interrupted command left pending, and removes its
+ * journal. With `readOnly`, as in a dry run, it throws instead, because the rollback writes files.
+ *
+ * @param {{ readOnly?: boolean }} [options]
+ */
+export async function recoverArtifactTransaction(options = {}) {
   if (!(await fileExists(TRANSACTION_PATH))) return;
   if (options.readOnly) {
     throw new Error("A pending artifact transaction requires recovery before a dry run.");
   }
+  const { transactionRoot, operations } = await readTransactionJournal();
+  await refuseEditedRollbackTargets(resolve("."), operations);
+  await rollBackArtifactOperations(resolve("."), operations);
+  await rm(TRANSACTION_PATH, { force: true });
+  await rm(transactionRoot, { recursive: true, force: true });
+}
+
+/** A SHA-256 digest as `writtenFingerprint` writes it: 64 lowercase hexadecimal digits. */
+const SHA256_DIGEST = /^[0-9a-f]{64}$/;
+
+/**
+ * A SHA-256 digest of everything at `path`, which it never follows when it is a symbolic link:
+ * the kind of each entry, its path below `path`, the mode bits of a file or folder, a file's bytes,
+ * and a link's target, so an edited, added, removed, retyped, or re-permissioned entry, even an
+ * empty folder, gives another digest. The commit records it for each staged path, and the move
+ * keeps all of it, so an unchanged target still matches (#1174).
+ *
+ * The mode bits are `mode & 0o7777`: on POSIX the permission bits and the setuid, setgid, and
+ * sticky bits. On Windows, Node reports `0o666`, or `0o444` when the read-only attribute is set,
+ * and no execute bit, so there the digest catches a change to the read-only attribute. A link's
+ * own mode is left out, because Linux cannot change it and the rollback never reads through it.
+ *
+ * @param {string} path
+ */
+export async function writtenFingerprint(path) {
+  const hash = createHash("sha256");
+  // One JSON line per entry, so each entry's path alone places it in the tree.
+  const record = (/** @type {(string | number)[]} */ entry) =>
+    hash.update(`${JSON.stringify(entry)}\n`);
+  /** @param {string} current @param {string} name */
+  const add = async (current, name) => {
+    const stats = await lstat(current);
+    if (stats.isSymbolicLink()) {
+      record(["link", name, await readlink(current)]);
+    } else if (stats.isDirectory()) {
+      record(["folder", name, stats.mode & 0o7777]);
+      for (const child of (await readdir(current)).sort()) {
+        await add(join(current, child), name === "" ? child : `${name}/${child}`);
+      }
+    } else if (stats.isFile()) {
+      const bytes = createHash("sha256")
+        .update(await readFile(current))
+        .digest("hex");
+      record(["file", name, stats.mode & 0o7777, bytes]);
+    } else {
+      record(["other", name]);
+    }
+  };
+  await add(path, "");
+  return hash.digest("hex");
+}
+
+/**
+ * The remedy that ends the message of a rollback that refuses to replace or remove edited paths.
+ * Moving a path out of the project keeps its edits, and the rollback then has nothing there to
+ * replace or remove, so it can run; deleting the path discards the edits the same way.
+ */
+const EDITED_ROLLBACK_REMEDY =
+  "To keep the edits, move each of these paths out of the project, then run the Calavera command again: the rollback then restores or removes the rest, and you can copy the edits back. To discard the edits, delete each of these paths instead, then run the Calavera command again.";
+
+/**
+ * Refuses, before the rollback changes anything, when it would replace or remove a target that is
+ * not exactly what the stopped operation wrote there (#1174; brief C8: local edits are preserved).
+ * The rollback replaces or removes a target that has a backup or did not exist before; such a
+ * target that is gone is fine, and one that exists must match the operation's `writtenHash`. A
+ * journal from a Calavera version that did not record `writtenHash` cannot show that a target is
+ * unchanged, so every such target that exists stops the rollback, named apart from the edited ones.
+ * A target the check cannot read stops it too, with the error code, and the error is the cause.
+ * The message names project paths only, never text from a file. A process that edits a target
+ * between this check and the rollback's step is not detected.
+ *
+ * @param {string} projectRoot
+ * @param {{ target: string, backup: string, hadTarget: boolean, writtenHash?: string }[]} operations
+ */
+async function refuseEditedRollbackTargets(projectRoot, operations) {
+  const changed = [];
+  const unrecorded = [];
+  /** @type {{ path: string, error: unknown }[]} */
+  const unreadable = [];
+  for (const operation of operations) {
+    // The same test the rollback's step makes before it replaces or removes the target.
+    if (operation.hadTarget && !(await fileExists(operation.backup))) continue;
+    const path = relative(projectRoot, operation.target);
+    try {
+      if (!(await pathExists(operation.target))) continue;
+      if (operation.writtenHash === undefined) {
+        unrecorded.push(path);
+      } else if ((await writtenFingerprint(operation.target)) !== operation.writtenHash) {
+        changed.push(path);
+      }
+    } catch (error) {
+      unreadable.push({ path, error });
+    }
+  }
+  const reasons = [];
+  if (changed.length > 0) {
+    reasons.push(
+      `it would replace or remove paths that changed after the stopped operation wrote them: ${changed.join(", ")}`,
+    );
+  }
+  if (unrecorded.length > 0) {
+    reasons.push(
+      `the journal does not record what the stopped operation wrote, so Calavera cannot tell whether these paths changed since: ${unrecorded.join(", ")}`,
+    );
+  }
+  for (const { path, error } of unreadable) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "an error";
+    reasons.push(
+      `reading ${path} to compare it with what the stopped operation wrote failed with ${code}`,
+    );
+  }
+  if (reasons.length === 0) return;
+  const errors = unreadable.map(({ error }) => error);
+  throw new Error(
+    `The artifact transaction rollback stopped before changing anything, because ${reasons.join(", and ")}. ${EDITED_ROLLBACK_REMEDY}`,
+    errors.length === 0
+      ? undefined
+      : { cause: errors.length === 1 ? errors[0] : new AggregateError(errors) },
+  );
+}
+
+/**
+ * Whether anything, a symbolic link included, is at `path`. Unlike `fileExists`, a link whose
+ * target is missing counts, because the rollback would remove it.
+ *
+ * @param {string} path
+ */
+async function pathExists(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/**
+ * Rolls back the operations of a journal that `readTransactionJournal` accepted, last first: each
+ * target with a backup gets its backup back, and each target that did not exist before is
+ * removed. Before each step, it stops when a folder above the target is a symbolic link, with a
+ * message that says which operations it already rolled back (#1193).
+ *
+ * @param {string} projectRoot
+ * @param {{ target: string, backup: string, hadTarget: boolean }[]} operations
+ */
+export async function rollBackArtifactOperations(projectRoot, operations) {
+  for (const [index, operation] of [...operations.entries()].reverse()) {
+    // An earlier step may have moved a backup that is a symbolic link into place, for example on
+    // a file system that treats two spellings the journal checks cannot tell apart as one name,
+    // so the folders are checked again before each step.
+    let link;
+    try {
+      link = await linkedFolder(projectRoot, dirname(operation.target));
+    } catch (error) {
+      throw new Error(
+        rollbackStoppedMessage(
+          index,
+          operations.length,
+          uncheckedFolders(projectRoot, operation.target, error),
+        ),
+        { cause: error },
+      );
+    }
+    if (link !== null) {
+      throw new Error(
+        rollbackStoppedMessage(
+          index,
+          operations.length,
+          `${relative(projectRoot, operation.target)} lies below the symbolic link ${relative(projectRoot, link)}`,
+        ),
+      );
+    }
+    // A step that fails throws its own error unchanged: callers report it as the rollback failure
+    // and tell the person to retry the rollback.
+    if (await fileExists(operation.backup)) {
+      await rm(operation.target, { recursive: true, force: true });
+      await mkdir(dirname(operation.target), { recursive: true });
+      await rename(operation.backup, operation.target);
+    } else if (!operation.hadTarget) {
+      await rm(operation.target, { recursive: true, force: true });
+    }
+  }
+}
+
+/**
+ * The message for a rollback that stopped before operation `index` of `count`, last first, so
+ * operations after `index` were rolled back and operations up to `index` were not.
+ *
+ * @param {number} index
+ * @param {number} count
+ * @param {string} reason
+ */
+function rollbackStoppedMessage(index, count, reason) {
+  const last = count - 1;
+  let done = "It rolled back no operation yet.";
+  if (index === last - 1) done = `It already rolled back operation ${last}.`;
+  if (index < last - 1) done = `It already rolled back operations ${index + 1} to ${last}.`;
+  return `The artifact transaction rollback stopped before operation ${index}, because ${reason}. ${done} Calavera does not roll the rest of this journal back. A symbolic link on the way may be one the rollback moved into place from a backup, so replace every link on the paths of the targets of operations 0 to ${index} with a real folder before you restore those files by hand from the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`;
+}
+
+/**
+ * Reads the pending artifact transaction's journal without writing, and checks every path it
+ * names: staged files and backups stay in the transaction root, and each target is a path a
+ * transaction may target (`isTransactionTarget`), so never the project root, a parent folder of
+ * it, or a file outside the paths a transaction writes (#1193). No folder between the project root
+ * and the transaction root, a backup, or a target may be a symbolic link, because the rollback
+ * would then remove or move files outside the project, and no target may equal or lie inside
+ * another. Throws on a journal that fails a check; a message names operations by their index and
+ * paths by their project path, and quotes nothing else from the journal. The checks run before the
+ * rollback moves anything, and `rollBackArtifactOperations` checks for a symbolic link again before
+ * each step; a process that replaces a folder with a link between that check and the step's `rm`
+ * or `rename` is not detected.
+ */
+async function readTransactionJournal() {
   const journal = await readJson(TRANSACTION_PATH);
   if (
     journal.schemaVersion !== 1 ||
@@ -1132,17 +2255,19 @@ async function recoverArtifactTransaction(options = {}) {
   }
   const projectRoot = resolve(".");
   const transactionRoot = resolve(journal.transactionRoot);
-  if (!isInside(resolve(TRANSACTION_ROOT), transactionRoot)) {
+  if (!isPathInside(resolve(TRANSACTION_ROOT), transactionRoot)) {
     throw new Error("Invalid artifact transaction root.");
   }
-  const operations = journal.operations.map((operation) => {
+  const operations = journal.operations.map((operation, index) => {
     if (
       !operation ||
       typeof operation !== "object" ||
       typeof operation.staged !== "string" ||
       typeof operation.target !== "string" ||
       typeof operation.backup !== "string" ||
-      typeof operation.hadTarget !== "boolean"
+      typeof operation.hadTarget !== "boolean" ||
+      ("writtenHash" in operation &&
+        (typeof operation.writtenHash !== "string" || !SHA256_DIGEST.test(operation.writtenHash)))
     ) {
       throw new Error("Invalid artifact transaction journal operation.");
     }
@@ -1150,24 +2275,199 @@ async function recoverArtifactTransaction(options = {}) {
     const target = resolve(operation.target);
     const backup = resolve(operation.backup);
     if (
-      !isInside(transactionRoot, staged) ||
-      !isInside(transactionRoot, backup) ||
-      !isInside(projectRoot, target)
+      !isPathInside(transactionRoot, staged) ||
+      !isPathInside(transactionRoot, backup) ||
+      !isPathInside(projectRoot, target)
     ) {
       throw new Error("Artifact transaction journal path escapes its workspace.");
     }
-    return { staged, target, backup, hadTarget: operation.hadTarget };
+    if (!isTransactionTarget(projectRoot, target)) {
+      const path = relative(projectRoot, target);
+      throw new Error(
+        `Artifact transaction journal operation ${index} targets ${path === "" ? "the project root" : path}, which is not a path an artifact transaction writes. ${JOURNAL_REFUSAL_REMEDY}`,
+      );
+    }
+    /** @type {string | undefined} */
+    const writtenHash = operation.writtenHash;
+    return { staged, target, backup, hadTarget: operation.hadTarget, writtenHash };
   });
-
-  for (const operation of operations.reverse()) {
-    if (await fileExists(operation.backup)) {
-      await rm(operation.target, { recursive: true, force: true });
-      await mkdir(dirname(operation.target), { recursive: true });
-      await rename(operation.backup, operation.target);
-    } else if (!operation.hadTarget) {
-      await rm(operation.target, { recursive: true, force: true });
+  // A target equal to or inside another one is refused: the rollback could otherwise move a
+  // backup, which may be a symbolic link, into a folder that a later step removes files through.
+  for (const [index, { target }] of operations.entries()) {
+    for (const [earlier, other] of operations.slice(0, index).entries()) {
+      if (pathsOverlap(other.target, target)) {
+        throw new Error(
+          `Artifact transaction journal operations ${earlier} and ${index} target ${relative(projectRoot, other.target)} and ${relative(projectRoot, target)}, the same path or one inside the other. ${JOURNAL_REFUSAL_REMEDY}`,
+        );
+      }
     }
   }
-  await rm(TRANSACTION_PATH, { force: true });
-  await rm(transactionRoot, { recursive: true, force: true });
+  const linked = await linkedJournalPath(projectRoot, transactionRoot, operations);
+  if (linked?.error) {
+    const subject =
+      linked.index === null
+        ? "the artifact transaction root"
+        : `artifact transaction journal operation ${linked.index}`;
+    throw new Error(
+      `Calavera cannot check ${subject}, because ${uncheckedFolders(projectRoot, linked.path, linked.error)}. ${JOURNAL_REFUSAL_REMEDY}`,
+      { cause: linked.error },
+    );
+  }
+  if (linked?.link) {
+    throw new Error(journalLinkRefusal(projectRoot, linked.path, linked.link));
+  }
+  return { transactionRoot, operations };
+}
+
+/**
+ * Why the folders above `path` could not be checked for a symbolic link, naming the error code
+ * only, so no text from the file system or the journal beyond the path reaches the message.
+ *
+ * @param {string} projectRoot
+ * @param {string} path
+ * @param {unknown} error
+ */
+function uncheckedFolders(projectRoot, path, error) {
+  const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "an error";
+  return `checking the folders above ${relative(projectRoot, path)} for a symbolic link failed with ${code}`;
+}
+
+/**
+ * The message that refuses a journal whose `path` lies below the symbolic link `link`.
+ *
+ * @param {string} projectRoot
+ * @param {string} path
+ * @param {string} link
+ */
+function journalLinkRefusal(projectRoot, path, link) {
+  return `Artifact transaction journal path ${relative(projectRoot, path)} lies below the symbolic link ${relative(projectRoot, link)}. ${JOURNAL_REFUSAL_REMEDY}`;
+}
+
+/**
+ * Whether `a` and `b` are the same path or one lies inside the other on a file system that
+ * ignores letter case and Unicode normalization, such as the default APFS on macOS. Both paths
+ * are compared folded on every platform, so a journal is refused the same way wherever it is
+ * read (#1193): decomposed, lower-cased, upper-cased, and lower-cased again, then composed. That
+ * merges the case pairs APFS merges and lower-casing alone misses, such as `ß`, `ẞ`, and `ss`,
+ * final and other sigma, and ligatures. It also merges dotless `ı` with `i`, which APFS keeps
+ * apart, so such a pair is refused although it would be safe. A fold can still miss aliases, such
+ * as Windows short names, so the rollback also checks for a symbolic link before each step.
+ *
+ * @param {string} a
+ * @param {string} b
+ */
+function pathsOverlap(a, b) {
+  const fold = (/** @type {string} */ path) =>
+    path.normalize("NFD").toLowerCase().toUpperCase().toLowerCase().normalize("NFC");
+  const foldedA = fold(a);
+  const foldedB = fold(b);
+  return isPathInside(foldedA, foldedB) || isPathInside(foldedB, foldedA);
+}
+
+/**
+ * The first path of an artifact transaction that lies below a symbolic link, with that link, or
+ * whose folders cannot be checked, with that error, together with the index of its operation
+ * (null for the transaction root), or null when every path is fine. The paths are the transaction root, each target, and each backup; the path
+ * itself is not checked, because removing or replacing a symbolic link changes only the link. The
+ * commit and the rollback both call it, so the commit never writes a journal the rollback refuses
+ * (#1193, owner decision of 2026-11-23).
+ *
+ * @param {string} projectRoot
+ * @param {string} transactionRoot
+ * @param {{ target: string, backup: string }[]} operations
+ * @returns {Promise<{ path: string, index: number | null, link: string | null, error: unknown } | null>}
+ */
+async function linkedJournalPath(projectRoot, transactionRoot, operations) {
+  for (const { path, index } of [
+    { path: transactionRoot, index: null },
+    ...operations.flatMap(({ target, backup }, index) => [
+      { path: target, index },
+      { path: backup, index },
+    ]),
+  ]) {
+    let link;
+    try {
+      link = await linkedFolder(projectRoot, dirname(path));
+    } catch (error) {
+      return { path, index, link: null, error };
+    }
+    if (link !== null) return { path, index, link, error: null };
+  }
+  return null;
+}
+
+/**
+ * The message that refuses to write artifacts through the symbolic link at the absolute path
+ * `link` (#1193, owner decision of 2026-11-23).
+ *
+ * @param {string} link
+ */
+function linkedFolderRefusal(link) {
+  const path = relative(resolve("."), link);
+  return `Calavera does not write artifacts through the symbolic link ${path}. Replace ${path} with a real folder, then run the command again.`;
+}
+
+/**
+ * Refuses, before an install, an update, a cache block, or the agent bootstrap writes anything, when
+ * a folder that the command writes into is a symbolic link or lies below one. For an install or an
+ * update, those are the folders an artifact transaction stages into or targets below;
+ * `commitArtifactTransaction` refuses the same links again before it moves anything, so this check
+ * only makes the command stop before it writes the cache block, the registry cache, or the staging
+ * folder. The registry cache folder itself is not checked, because no transaction targets it. A
+ * targeted update checks the outputs of every selection it stages again, including those whose
+ * files do not change. The agent bootstrap has no transaction, so this check is the only one that
+ * stops it (#1231).
+ *
+ * @param {string[]} folders Project paths of the folders the command writes into.
+ */
+export async function refuseLinkedArtifactFolders(folders) {
+  const projectRoot = resolve(".");
+  for (const folder of folders) {
+    const link = await linkedFolder(projectRoot, resolve(folder));
+    if (link !== null) throw new Error(linkedFolderRefusal(link));
+  }
+}
+
+/**
+ * The project folders an artifact transaction that installs the AI items of `recipe` stages into or
+ * targets below: the transaction folder, each selection's package folder, and the folder of each
+ * AI artifact output.
+ *
+ * @param {{ ai?: unknown }} recipe
+ * @param {{ id: string }[]} selections
+ */
+function artifactInstallFolders(recipe, selections) {
+  return [
+    TRANSACTION_ROOT,
+    ...selections.map(({ id }) => join(PACKAGE_PATH, id)),
+    ...resolveAiArtifacts(recipe).flatMap((artifact) =>
+      aiArtifactOutputPaths(artifact).map(dirname),
+    ),
+  ];
+}
+
+/**
+ * The first folder from below `projectRoot` down to `folder`, both included, that is a symbolic
+ * link, or null when none is. Stops at the first folder that does not exist, because nothing below
+ * it exists either. Throws when it cannot check a folder, for example because a file stands where
+ * a folder would be or a folder cannot be read, so the caller stops before it changes anything.
+ *
+ * @param {string} projectRoot
+ * @param {string} folder An absolute path inside `projectRoot`.
+ * @returns {Promise<string | null>}
+ */
+async function linkedFolder(projectRoot, folder) {
+  let current = projectRoot;
+  for (const name of relative(projectRoot, folder).split(sep).filter(Boolean)) {
+    current = join(current, name);
+    let stats;
+    try {
+      stats = await lstat(current);
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return null;
+      throw error;
+    }
+    if (stats.isSymbolicLink()) return current;
+  }
+  return null;
 }

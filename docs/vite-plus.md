@@ -204,7 +204,12 @@ apply would stop. When the project already lists every package in
 `devDependencies`, a note says that apply still runs the command, which can
 update their versions and the lockfile. `dry_run_apply` and
 `apply --dry-run --json` report these as `installCommand` and `installNotes`
-(ADR-0012, Decision 3). A project detection reports as unmanaged, or as
+(ADR-0012, Decision 3). With `--no-install`, the dry run says instead that
+the packages will not be installed and gives the command to install them
+later. An apply that skips the install says the same after it runs, and
+`apply --no-install --json` and `apply_recipe` with `noInstall` report the
+command as `laterInstallCommand`, because `installCommand` is `null` when
+apply skips the install. A project detection reports as unmanaged, or as
 unknown outside a Vite+ workspace, keeps its package manager's own command,
 such as `pnpm add --save-dev knip`.
 
@@ -241,7 +246,65 @@ With `create-here`, `apply` creates `package.json` with the package manager's
 not scaffolded by `vp create`, which always writes a `package.json`, and `init`
 writes only that file, without linking `node_modules`. The development
 dependency install that follows still goes through `vp add -D` when the
-ancestor is managed (ADR-0012, Decision 1).
+ancestor is managed (ADR-0012, Decision 1). The files Calavera generates
+follow the same verdict: when the ancestor is managed, `apply` formats them with
+the ancestor's `vp fmt` before it writes them, and so does Calavera's own
+`init` command for the recipe, with or without `--apply` (#961, #1086). When
+the ancestor is not managed, Calavera writes them unformatted. The
+`package.json` that the package manager's `init` creates follows the same
+verdict (#1085). The package manager writes its keys in its own order, and a
+real vite-plus 1.7.0 run showed that `vp fmt` sorts them, so the ancestor's
+`vp check` failed on the file. When the ancestor is managed, `apply` formats
+`package.json` with the ancestor's `vp fmt` three times: as soon as `init`
+writes it, after adding its scripts, and after the development dependency
+install, because `vp add -D` adds `devDependencies` as the last key. The dry
+run cannot show that file's text, because the package manager writes it only
+when `apply` runs.
+
+Every `apply` that creates `package.json` with `init` keeps a record of it in
+`.calavera/state.json`, whether or not the ancestor is managed. As soon as
+`init` has written the file, and before formatting it, `apply` records
+`createdPackageJSON` with the hash of the text it last wrote to
+`package.json`, and it updates the hash each time it or its install writes the
+file. If anything stops that `apply`, including a format or an install that
+fails, the next `apply` formats `package.json` the same way, although the file
+now exists, as long as the file still has the recorded text.
+
+The dry run reports `package.json` as unchanged only when the formatted text is
+the file's bytes, so `apply` writes nothing. When the format changes more than
+the scripts, the dry run says so under the `package.json` line, for example
+`Would format it with vp fmt from vite-plus 1.7.0, which reorders its keys;
+Calavera or its install wrote its current text`, and `--json` reports the same
+sentence as the `formatting` field of the `package.json` change.
+
+A `package.json` with any other text is yours: it keeps the order you give its
+keys, and `apply` drops the record. `apply --no-install` keeps the record, so
+the `apply` that runs the development dependency install formats the file
+afterward and drops the record. When an install fails, the error says to run
+`apply` again, which installs and formats `package.json`. If you run the
+install command yourself instead, it changes the text, so Calavera leaves the
+file as the install wrote it, and `vp check --fix` in the ancestor formats it.
+A stopped `apply` leaves `.calavera/state.json` next to the new
+`package.json`.
+
+Calavera runs that `vp fmt` in the new project's directory, not in the
+ancestor's. Runs against vite-plus 1.7.0, under a single ancestor project and
+under a workspace package, showed that `vp fmt` looks upward from its working
+directory for the nearest `vite.config.*` file with a `fmt` block (#1087). So
+it finds the ancestor's, applies its settings, and applies its `ignorePatterns`,
+which are relative to the ancestor's directory. The output matched a run in the
+ancestor's directory, and the ancestor's `vp check` accepted it.
+
+The same runs found two cases where they disagree, which #1182 tracks:
+
+- A `.editorconfig` in the new project's directory. Oxfmt reads `.editorconfig`
+  only from its working directory upward, so Calavera's run uses that file and
+  the ancestor's `vp check` does not, and the check can fail.
+- A `vite.config.*` file with its own `fmt` block in a folder below the
+  workspace root, such as a workspace package above the project. `vp fmt` uses
+  that block, but `vp check` uses the workspace root's `fmt` block when one
+  exists, so the check can fail. The Vite+ documentation recommends
+  `fmt.overrides` in the root `vite.config.ts` instead of nested `fmt` blocks.
 
 ## What the quality script runs
 
@@ -276,16 +339,20 @@ of Calavera's scripts. With only one, `quality` would only repeat that script,
 for example `npm run knip`, so Calavera does not generate it, and the dry run
 says so:
 `Would omit script quality: quality was requested, but it would only run "npm run knip", so Calavera does not generate quality as an alias of that script.`
-Apply records the value it writes to `quality`, or `null` when it writes none,
-as `qualityScript` in `.calavera/state.json`. When apply does not generate
+Apply records the value it writes to `quality` as `qualityScript` in
+`.calavera/state.json`. When it writes none, it keeps a record that still
+equals the project's value, and records `null` otherwise. When apply does not generate
 `quality`, it removes the existing `quality` if that record holds exactly the
 same value, whatever recipe Calavera wrote it for, because the record shows
 that Calavera wrote it. A value the record does not hold is kept, so a
 `quality` that apply kept as your own, or that you edited, is never removed by
-a later apply of this release. A state file without the record, written by a
-release before this one, does not show who wrote `quality`: those releases
-wrote no `quality` when the recipe turned it off, and the state file does not
-record that choice. Apply then keeps the value, even one an earlier release
+a later apply of this release. A recipe that sets `scripts.quality` to `false`
+leaves `quality` alone: apply neither writes nor removes it, and keeps a record
+that holds the project's value, so a later apply that omits a requested
+`quality` can still remove the value Calavera wrote. A state file without the
+record, written by a release before this one, does not show who wrote
+`quality`: those releases wrote no `quality` when the recipe turned it off, and
+the state file does not record that choice. Apply then keeps the value, even one an earlier release
 wrote, such as `npm run knip`, or `npm run lint` from before the Stylelint
 rename, and the dry run names the match:
 `... package.json keeps its quality script, "npm run knip", because Calavera cannot show that it wrote that value. It matches a value an earlier release wrote for this recipe, so remove it if you did not write it yourself.`
@@ -320,8 +387,11 @@ values: default, minimal. The modern profile was removed; use default
 instead." (ADR-0011, Decision; `packages/cli/src/recipe.js`,
 `assertKnownProfile`.)
 
+`doctor` warns about a recipe that still names either one, with the same
+replacement, because `apply` refuses that recipe (#1082). The warning is
+advisory, so it does not change `doctor`'s exit status.
+
 ## Not yet
 
 - [#433](https://github.com/schalkneethling/create-project-calavera/issues/433): regenerate the `vp` detection fixtures against a newer vite-plus release.
-- [#431](https://github.com/schalkneethling/create-project-calavera/issues/431): `doctor` warns when a recipe still carries a JavaScript or TypeScript toolchain integration in a `vp`-managed project.
 - [#430](https://github.com/schalkneethling/create-project-calavera/issues/430): offer create-here, apply-at-ancestor, or abandon when the inspected directory has no manifest of its own.

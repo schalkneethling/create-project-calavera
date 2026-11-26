@@ -19,7 +19,9 @@ const AI_SOURCE_DIRECTORIES = Object.freeze({
  * @property {Record<string, unknown>} [inputs]
  *
  * @typedef {object} NormalizedAiItem
- * @property {string} [id]
+ * @property {string} [id] The ID the entry names, absent for a legacy entry.
+ * @property {string} catalogId The ID of the catalog artifact the entry selects, whether it names an
+ *   ID or a legacy type and src (#1119).
  * @property {AiArtifactType} type
  * @property {string} src
  * @property {string} [target]
@@ -126,8 +128,12 @@ function normalizeAiTarget(type, item, index) {
 function validateAiSource(src, index, type) {
   const artifact = aiArtifactCatalog.find((candidate) => candidate.src === src);
 
+  // #1137: the src is text from the person's file, so the message names the entry by its position
+  // instead of repeating it. A src outside the catalog, inside src/ai/ or not, is unknown.
   if (!artifact) {
-    throw new Error(`AI item at index ${index} source must stay within src/ai/: ${src}.`);
+    throw new Error(
+      `AI item at index ${index} (ai[${index}]) names a legacy src that Calavera does not know. Remove the item from ai, or replace it with an id entry that the list_ai_artifacts MCP tool lists.`,
+    );
   }
 
   if (artifact.type !== type) {
@@ -137,6 +143,21 @@ function validateAiSource(src, index, type) {
   }
 
   return artifact;
+}
+
+/**
+ * Throws when the artifact declares the targets it supports and `target` is not one of them.
+ * Composing and validating a recipe both call this, so a composed recipe always validates (#1077).
+ *
+ * @param {(typeof aiArtifactCatalog)[number]} artifact
+ * @param {string | undefined} target
+ * @param {number} index
+ * @param {string} name The ID or source the entry names.
+ */
+export function assertSupportedTarget(artifact, target, index, name) {
+  if (artifact.targets && !artifact.targets.includes(/** @type {string} */ (target))) {
+    throw new Error(`AI item at index ${index} target is not supported by ${name}.`);
+  }
 }
 
 /**
@@ -156,6 +177,55 @@ export function assertFirstSelection(firstIndexById, id, index) {
     );
   }
   firstIndexById.set(id, index);
+}
+
+/**
+ * #1125, owner decision of 2026-11-21: apply refuses a legacy entry, such as
+ * `{ "type": "skill", "src": "skills/protected-branch-guard" }`, that selects an artifact that
+ * declares wiring or inputs, because a legacy entry cannot record the inputs and Calavera does not
+ * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply, update,
+ * `artifacts install` and `artifacts update` (#1137), their dry runs, and the MCP apply tools call
+ * this before they plan or write anything. Clean still reads a legacy entry; doctor reports the
+ * refusal with `legacyEntryWiringRefusal` (#1140).
+ *
+ * @param {unknown} aiConfig
+ */
+export function assertNoLegacyEntryNeedsWiring(aiConfig) {
+  const refusal = legacyEntryWiringRefusal(aiConfig, "Calavera stopped before writing anything");
+  if (refusal !== undefined) throw new Error(refusal);
+}
+
+/**
+ * The message apply's legacy-entry refusal raises (#1125), or undefined when apply would not
+ * refuse. doctor reports the same entries and remedy (#1140), so the rule and its remedy live in
+ * one place. Only the outcome differs: apply stopped, while doctor says that apply stops.
+ *
+ * @param {unknown} aiConfig
+ * @param {string} outcome What the refusal means for this command, such as "apply stops before writing anything".
+ * @returns {string | undefined}
+ */
+export function legacyEntryWiringRefusal(aiConfig, outcome) {
+  const refused = normalizeAiItems(aiConfig).flatMap((item, index) => {
+    if (item.id !== undefined) return [];
+    const artifact = /** @type {(typeof aiArtifactCatalog)[number]} */ (
+      aiArtifactCatalog.find(({ id }) => id === item.catalogId)
+    );
+    const needs = [artifact.wiring ? "wiring" : undefined, artifact.inputs ? "inputs" : undefined]
+      .filter(Boolean)
+      .join(" and ");
+    if (needs === "") return [];
+    // Only the validated type and src are named, not the person's raw entry.
+    const entry = JSON.stringify({ type: item.type, src: item.src });
+    return [
+      `- ai[${index}] ${entry} selects ${artifact.id} by its legacy type and src, and ${artifact.id} needs ${needs}, which a legacy entry cannot record.`,
+    ];
+  });
+  if (refused.length === 0) return undefined;
+  return [
+    `${outcome}, because these legacy AI entries select artifacts that need wiring or inputs:`,
+    ...refused,
+    "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then apply the recipe again. Apply in a terminal asks for each input value the recipe does not record; any other run names where the recipe must record it.",
+  ].join("\n");
 }
 
 /**
@@ -183,7 +253,13 @@ export function normalizeAiItems(aiConfig) {
 
     if (entry.id) {
       const artifact = aiArtifactCatalog.find(({ id }) => id === entry.id);
-      if (!artifact) throw new Error(`AI item at index ${index} has unknown id "${entry.id}".`);
+      // #1137: the id is text from the person's file, so the message names the entry by its
+      // position instead of repeating it.
+      if (!artifact) {
+        throw new Error(
+          `AI item at index ${index} (ai[${index}]) names an artifact ID that Calavera does not know. Remove the item from ai, or replace its id with an artifact ID that the list_ai_artifacts MCP tool lists.`,
+        );
+      }
       item = {
         id: artifact.id,
         type: artifact.type,
@@ -205,18 +281,11 @@ export function normalizeAiItems(aiConfig) {
 
     assertFirstSelection(firstIndexById, artifact.id, index);
 
-    if (
-      item.target !== undefined &&
-      artifact.targets &&
-      (!target || !artifact.targets.includes(target))
-    ) {
-      throw new Error(
-        `AI item at index ${index} target is not supported by ${item.id ?? item.src}.`,
-      );
-    }
+    assertSupportedTarget(artifact, target, index, item.id ?? item.src);
 
     return {
       id: item.id,
+      catalogId: artifact.id,
       type,
       src: item.src,
       target,

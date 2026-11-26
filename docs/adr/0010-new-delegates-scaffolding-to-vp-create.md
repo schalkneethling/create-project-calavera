@@ -54,6 +54,8 @@ The runner is chosen from Calavera's own `--package-manager` when it is given, a
 
 The 2026-11-13 amendment ("Amendment: The Launching Package Manager Chooses the Runner" below) replaces the npm fallback in the paragraph above: without `--package-manager`, the package manager that launched Calavera chooses the runner, and npm is the fallback only when that cannot be read.
 
+Note added on 2026-11-25 (#1151): the parenthesis in the paragraph above holds under `--new`, where Vite+ recognizes the runner's package manager and uses it unless a `VP_PACKAGE_MANAGER` override or a package manager detected in a surrounding project decides first, but it reads as if Vite+ never asks. Vite+ still asks for the package manager when nothing else decides it, as the note under the 2026-10-21 amendment's "Why Decision 1 is reopened" records.
+
 The runner is chosen over putting a bin directory on `PATH` because the `PATH` alternative requires Calavera to install vite-plus somewhere first and then locate its bin directory, which is the job a runner exists to do. A runner that executes a package bin is expected to expose that package's bins to the process it starts, and that is what the bare `"vp"` re-invocation needs. Setting `VP_CLI_BIN` is rejected for the same reason ADR-0001 rejected the `vite-plus-core` pin as a primary signal: it is an internal name Vite+ has not promised to keep. A globally installed `vp` is not preferred even when one is on `PATH`, because its version is whatever the machine happens to hold, and the spawn has to behave the same on every machine.
 
 The exposure of `vp` to the child is verified per runner, not assumed. The implementation issue proves, for each of the four runners, that `vp create` completes its install with no `vp` on the parent `PATH`. If a runner does not expose `vp`, the implementation stops and returns to this decision rather than falling back to `VP_CLI_BIN` or a hand-built `PATH`.
@@ -119,6 +121,8 @@ Continuing in the same process is chosen because the hand-off between the two co
 With the npm runner, `npx --package vite-plus` sets `npm_config_package=vite-plus` for `vp`. When npm is also the project's package manager, the `npx create-vite@latest` that `vp create` starts for the template inherits that setting, looks for its command inside vite-plus, and exits 127 (#670). Vite+ closed voidzero-dev/vite-plus#2970 without changing `vp create` and recommended the `create-vite-plus` package instead (voidzero-dev/vite-plus#3028).
 
 Vite+ 1.3.0 made this failure the default. When `--package-manager` is not passed, `vp create` no longer asks which package manager to use; it picks the one that launched it. Through Calavera's default npm runner that is npm, so a plain `npm create project-calavera -- --new` now fails every time. The owner hit this twice while dogfooding on 2026-10-21.
+
+Note added on 2026-11-25 (#1151): "no longer asks" is too broad, already for 1.3.0. #1029 found that Vite+ asks for the package manager when nothing else decides it: no `VP_PACKAGE_MANAGER` environment variable (which vite-plus 1.6.0 and 1.8.0 read, but 1.3.0 does not), no forwarded `--package-manager`, no package manager it detects in a surrounding project, and no launcher it recognizes in `npm_config_user_agent`. In `dist/create/bin.js` of the published vite-plus 1.3.0, the chosen package manager is the forwarded or detected one `?? launcherPackageManager ?? await selectPackageManager(...)`, and 1.6.0 and 1.8.0 put `packageManagerOverride?.name` first. The finding this paragraph rests on still holds under `--new`. This is derived from the #1109 probe and the source, not from an end-to-end run of each runner: Calavera removes the inherited `npm_config_user_agent`, each runner then sets its own value, and Vite+ reads the name before the first `/`, so it recognizes the runner's package manager and does not ask. A `VP_PACKAGE_MANAGER` override or a package manager detected in a surrounding project still decides before the runner's, and Vite+ does not ask in those cases either. A `user-agent` setting in an `.npmrc` file changes this for the npm runner, because npm uses that setting instead: when it names a package manager Vite+ supports, Vite+ uses that package manager without asking, and otherwise Vite+ asks. `docs/agent-first-calavera-workflow.md` describes the full order and what Vite+ does when it cannot ask.
 
 ### Evidence
 
@@ -263,6 +267,8 @@ No `VP_CLI_BIN` or `PATH` change is added to the child environment. Decision 1's
 
 The Corepack finding affects the Yarn failure hint from #911, which this change leaves as it is. The hint runs `yarn --version` in the working directory and, under Yarn 1, says that Yarn has no `dlx` command. With a Corepack Yarn 1 default and no `packageManager` field, `yarn --version` prints 1.22.22 while `yarn dlx` runs Yarn 4.18.0, so if that run fails for another reason, such as the network or Vite+, the hint names Yarn 1 as the cause when it is not. This needs its own issue, because #911 is closed.
 
+> **Note (2026-11-25, #1175):** ADR-0023 removed Yarn 1 support. The Yarn failure hint and its two `yarn` reads are gone, so the sentence "The Yarn row therefore keeps the Yarn 1 behavior that #911 and #909 were written against" above and this paragraph describe code that no longer exists. A failed `yarn dlx` now gets the same message as a failed `pnpm dlx`.
+
 ## Amendment: The Launching Package Manager Chooses the Runner
 
 **Status:** Accepted (decided by the project owner on 2026-11-13 in #676, implementation issue #909). It amends Decision 1, the rule that chooses the runner when Calavera's own `--package-manager` is not given. The runner table, Decisions 2 to 7, and the 2026-10-21 amendment are unchanged.
@@ -303,6 +309,8 @@ This follows the launcher because, outside a workspace, the runner's package man
 
 Yarn 1 falls back to npm instead of failing, because the runner table has no command that works under Yarn 1. That user gets an npm project unless they forward `--package-manager` after `--new`, which is today's behavior for every launcher, and the confirmation states which package manager Vite+ will use.
 
+> **Note (2026-11-25, #1175):** Yarn 1 no longer falls back to npm, because Calavera stops when Yarn 1 starts it (ADR-0023). A `yarn/1` user agent still reaches `launchingPackageManager` when npm started Calavera and a project `.npmrc` sets `user-agent`, and the runner is then npm, as this Decision states.
+
 Calavera still does not add `--package-manager` to the forwarded arguments (Decision 5). The confirmation and the `--dry-run` output already name the runner command and the package manager Vite+ will use, so they need no new line; they now show the launcher's package manager instead of npm.
 
 ### Consequences of the amendment
@@ -311,6 +319,11 @@ Calavera still does not add `--package-manager` to the forwarded arguments (Deci
 - #909 updates the paragraph in `docs/agent-first-calavera-workflow.md` that says Calavera uses npm when no `--package-manager` is given.
 - Starting Calavera with `npx --package create-project-calavera` reports npm, so the runner stays npm and #689 is unchanged. The known-issue advice to choose another runner with `--package-manager` before `--new` still applies.
 - An explicit `--package-manager yarn` under Yarn 1 still fails at `yarn dlx`. This amendment does not change it.
+
+  > **Note (2026-11-25, #1175):** This now applies to a Yarn 1 on the `PATH` when another package manager started Calavera, and the failure carries no Yarn hint (ADR-0023).
+
+- Note added on 2026-11-21 (#1109): Vite+ reads `npm_config_user_agent` from its own environment, which the runner either sets or passes on from Calavera's. `npm create` and `bunx` pass an inherited value on, so under the Yarn 1 fallback to npm, under any other fallback to npm, and with `--package-manager npm` or `bun` before `--new` under another launcher, Vite+ followed the launcher while the confirmation named the runner's package manager (found by the #1028 spike). The owner decided to remove `npm_config_user_agent` from the `vp create` child's environment, which amends the #689 decision to remove only `npm_config_package` and `npm_config_call`. Each runner then sets its own value: npm 11.20.0, pnpm 12.9.1, and Bun 1.3.9 did so in a probe on 2026-11-21, and Yarn 2 or later always replaces the value (the probe is recorded on #1109). A `user-agent` setting in an `.npmrc` file still applies to the npm runner, because npm reads that setting from its configuration files when the environment does not set it. This amendment's rule for choosing the runner is unchanged, because Calavera still reads the variable from its own environment.
+- Note added on 2026-11-21 (#1080): Corepack can pin a `packageManager` field into the outermost `package.json` above the new project when it runs `pnpm dlx` or `yarn dlx`. Corepack 0.32.0 pins unless `COREPACK_ENABLE_AUTO_PIN` is `0`, and Corepack 0.36.0 pins only when it is `1`. The owner decided that `vpCreateEnvironment` sets `COREPACK_ENABLE_AUTO_PIN` to `0` for every runner, replacing any value the person set, in any letter case, for this one run. This amends the #689 decision to pass every other variable through unchanged. The value also reaches the processes that `create-vite-plus` starts, which keeps its own install from pinning the parent.
 
 ## Consequences
 

@@ -1,5 +1,6 @@
 // @ts-check
-import { writeJSON } from "./json-rewrite.js";
+import { CHANGED_CONTENT, PRINTS_NOTHING, writeJSON } from "./json-rewrite.js";
+import { FormatterFailure } from "./formatter-failure.js";
 
 // The JSON and Markdown files Calavera generates pass through the project's formatter before the
 // dry run, so a Vite+ project's `vp check` accepts them as written (#669). Nothing formats them
@@ -9,6 +10,31 @@ import { writeJSON } from "./json-rewrite.js";
 /**
  * @typedef {import("./project-formatter.js").ProjectFormatter} ProjectFormatter
  */
+
+/** @type {ProjectFormatter} */
+const unformatted = {
+  description: "no formatter, because Calavera formats only generated files named .json or .md",
+  format: async (_path, text) => text,
+};
+
+/**
+ * Returns the formatter `formatGeneratedText` formats the JSON file at `path` with: the project's
+ * for a name that ends in .json, and none for any other name, such as a recipe passed as
+ * `--config recipe`. A check that asks how the file would be written, such as
+ * `rewriteLossProblem`, uses this so it judges the text that is written (#1078).
+ *
+ * @param {string} path The file path relative to the project root.
+ * @param {() => Promise<ProjectFormatter>} loadFormatter Called only for a .json name.
+ * @returns {Promise<ProjectFormatter>}
+ */
+export async function generatedJSONFormatter(path, loadFormatter) {
+  return isFormattedJSON(path) ? loadFormatter() : unformatted;
+}
+
+/** @param {string} path */
+function isFormattedJSON(path) {
+  return path.endsWith(".json");
+}
 
 /**
  * Returns the text Calavera writes for a file it generates. A JSON or Markdown file is formatted
@@ -23,7 +49,7 @@ import { writeJSON } from "./json-rewrite.js";
  * @throws When the formatted text does not hold what Calavera generated.
  */
 export async function formatGeneratedText(path, text, loadFormatter) {
-  if (path.endsWith(".json")) {
+  if (isFormattedJSON(path)) {
     return writeJSON(JSON.parse(text), path, await loadFormatter());
   }
 
@@ -37,10 +63,18 @@ export async function formatGeneratedText(path, text, loadFormatter) {
     // that line back followed by "\r\n", not "\n".
     const firstLine = text.split("\n", 1)[0] ?? "";
     const formattedFirstLine = formatted.split(/\r?\n/, 1)[0];
-    if (formattedFirstLine !== firstLine || formattedFirstLine.length === formatted.length) {
-      const start = formatted.trimStart().split(/\r?\n/, 1)[0]?.slice(0, 120) ?? "";
-      throw new Error(
-        `${formatter.description} returned text for ${path} that does not start with the line Calavera sent, "${firstLine}". It begins: "${start}". Make sure vite.config.ts prints nothing when vp fmt loads it, then run Calavera again.`,
+    // #1157: neither error quotes a line, because either one can hold the file's text or
+    // whatever vite.config.ts printed.
+    if (formattedFirstLine !== firstLine) {
+      throw new FormatterFailure(
+        "printed-output",
+        `${formatter.description} returned text for ${path} that does not start with the first line Calavera sent, so something came before the formatted text, such as output that vite.config.ts printed. ${PRINTS_NOTHING}`,
+      );
+    }
+    if (formattedFirstLine.length === formatted.length) {
+      throw new FormatterFailure(
+        "changed-content",
+        `${formatter.description} returned text for ${path} that ends after the first line, so it lost the rest of what Calavera sent. ${CHANGED_CONTENT}`,
       );
     }
     return formatted;

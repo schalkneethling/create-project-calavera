@@ -26,6 +26,30 @@ const integrationOptions = {
   "github-repository-controls": { repository: "octocat/example", defaultBranch: "main" },
 };
 
+/**
+ * Runs `doctor --json` in `cwd` and returns its report. Doctor exits 1 exactly when an issue is an
+ * error (#1030), and a crash writes to standard error, so a run that crashed after it printed JSON,
+ * or that exited with the wrong code, fails here instead of passing (#1092).
+ *
+ * @param {string} cwd
+ * @param {0 | 1} expectedCode The exit code doctor must give, pinned rather than read from the report.
+ */
+async function runDoctorJson(cwd, expectedCode) {
+  const { stdout, stderr, code } = await execFileAsync(
+    process.execPath,
+    [cliPath, "doctor", "--json"],
+    { cwd, env: { ...process.env, NO_COLOR: "1" } },
+  ).then(
+    (result) => ({ ...result, code: 0 }),
+    (error) => error,
+  );
+  assert.equal(stderr, "", "doctor wrote to standard error");
+  const report = JSON.parse(stdout);
+  assert.equal(code, expectedCode, "doctor exit code");
+  assert.equal(code, report.issues.some(({ level }) => level === "error") ? 1 : 0);
+  return report;
+}
+
 const repositoryControlFiles = [
   ".github/repository-controls.json",
   ".github/dependabot.yml",
@@ -162,21 +186,21 @@ test("doctor checks every planned file", async () => {
     })}\n`,
   );
 
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
-    cwd: directory.path,
-    env: { ...process.env, NO_COLOR: "1" },
-  }).catch((error) => error);
-  const prefix = "Missing managed file: ";
-  const messages = JSON.parse(stdout)
-    .issues.map(({ message }) => message)
-    .filter((message) => message.startsWith(prefix));
+  // Managed files apply has not written yet are warnings and nothing else is an error, so doctor
+  // exits 0 (ADR-0020, Decision 4).
+  const messages = (await runDoctorJson(directory.path, 0)).issues
+    .filter(({ check }) => check === "managed-file")
+    .map(({ message }) => message)
+    // The Varlock schema is scaffolded, not a managed file, so its warning is left out here.
+    .filter((message) => !message.startsWith("Missing Varlock schema"));
 
   // #925: the github-repository-controls files are checked like every other managed file, and at
   // the repository root the remedy is the plain one.
   assert.deepEqual(
     messages,
     plannedPaths.map(
-      (path) => `${prefix}${path}. Run create-project-calavera apply to regenerate managed files.`,
+      (path) =>
+        `${path} does not exist yet, so apply writes it. Run npm create project-calavera apply.`,
     ),
   );
 });
@@ -206,19 +230,26 @@ test("doctor run from a workspace member checks the repository-controls files at
     await writeFile(join(root, path), "");
   }
 
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
-    cwd: member,
-    env: { ...process.env, NO_COLOR: "1" },
-  }).catch((error) => error);
-  const messages = JSON.parse(stdout)
-    .issues.map(({ message }) => message)
-    .filter((message) => message.startsWith("Missing managed file: "));
+  const { issues } = await runDoctorJson(member, 1);
+  // github-repository-controls selected in a member is the one error, so doctor exits 1.
+  const errors = issues.filter(({ level }) => level === "error").map(({ message }) => message);
+  assert.equal(errors.length, 1, errors.join("\n"));
+  assert.ok(
+    errors[0].startsWith(
+      "github-repository-controls applies at the repository root, not in a workspace member.",
+    ),
+    errors[0],
+  );
+  // The files present at the repository root have no record, so each is a note; the missing one
+  // is pending, a warning whose remedy runs apply from the repository root (ADR-0020).
+  const pending = issues
+    .filter(({ check, level }) => check === "managed-file" && level === "warning")
+    .map(({ message }) => message);
 
-  assert.equal(messages.length, 1, messages.join("\n"));
-  // process.cwd() is the real path, so on macOS the root is /private/var/..., not /var/....
+  assert.equal(pending.length, 1, pending.join("\n"));
   assert.equal(
-    messages[0],
-    `Missing managed file: ../../${missingFile}. Run create-project-calavera apply from the repository root, ${await realpath(root)}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`,
+    pending[0],
+    `../../${missingFile} does not exist yet, so apply writes it. Run npm create project-calavera apply from the repository root, ${await realpath(root)}, adding --config <path> when the recipe is saved elsewhere.`,
   );
 });
 

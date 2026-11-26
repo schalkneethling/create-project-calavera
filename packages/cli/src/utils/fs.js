@@ -1,20 +1,55 @@
 // @ts-check
 import { lstatSync, readFileSync } from "node:fs";
 import { access, constants, realpath, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import nodePath, { dirname, resolve } from "node:path";
+
+import { jsonSyntaxProblem } from "./parse-position.js";
 
 const TEMPLATE_LIMIT = 256 * 1024;
 
-/** @param {string} path @param {string} [label] */
-export function assertSafeRelativePath(path, label = "Path") {
-  const normalized = relative(".", resolve(path));
+/**
+ * Whether `child` is `parent` itself or lies below it, compared by name: links are not resolved,
+ * so a caller that must see through links resolves them first. `relative` normalizes its result,
+ * so a path outside is `..`, starts with `..` and a separator, or stays absolute when it is on
+ * another Windows drive. A name that only starts with `..`, such as `..recipe.json`, is inside
+ * (owner decision on #1026).
+ *
+ * @param {string} parent
+ * @param {string} child
+ * @param {Pick<typeof nodePath, "relative" | "isAbsolute" | "sep">} [pathRules] The platform's
+ *   path rules; tests pass `posix` or `win32`.
+ */
+export function isPathInside(parent, child, pathRules = nodePath) {
+  const fromParent = pathRules.relative(parent, child);
+  return (
+    fromParent !== ".." &&
+    !fromParent.startsWith(`..${pathRules.sep}`) &&
+    !pathRules.isAbsolute(fromParent)
+  );
+}
+
+/**
+ * Returns `path` when it names something below `root`: not absolute, with no `..` segment, not
+ * `root` itself, and inside `root` once resolved, which on Windows also refuses a drive-relative
+ * path such as `D:state.json`.
+ *
+ * @param {string} path
+ * @param {string} [label]
+ * @param {{ pathRules?: Pick<typeof nodePath, "relative" | "resolve" | "isAbsolute" | "sep">, root?: string }} [options]
+ *   `pathRules` are the platform's path rules; tests pass `win32`. `root` defaults to the
+ *   working directory.
+ */
+export function assertSafeRelativePath(
+  path,
+  label = "Path",
+  { pathRules = nodePath, root = process.cwd() } = {},
+) {
+  const target = pathRules.resolve(root, path);
   if (
-    isAbsolute(path) ||
+    pathRules.isAbsolute(path) ||
     path.split(/[\\/]/).includes("..") ||
-    !normalized ||
-    normalized === ".." ||
-    normalized.startsWith(`..${sep}`) ||
-    isAbsolute(normalized)
+    !pathRules.relative(root, target) ||
+    !isPathInside(root, target, pathRules)
   ) {
     throw new Error(`${label} must stay inside the current project workspace.`);
   }
@@ -32,12 +67,7 @@ export async function assertWorkspacePath(path, root = process.cwd(), label = "P
     ancestor = parent;
   }
   const canonicalAncestor = await realpath(ancestor);
-  const relativeAncestor = relative(canonicalRoot, canonicalAncestor);
-  if (
-    relativeAncestor === ".." ||
-    relativeAncestor.startsWith(`..${sep}`) ||
-    isAbsolute(relativeAncestor)
-  ) {
+  if (!isPathInside(canonicalRoot, canonicalAncestor)) {
     throw new Error(`${label} must stay inside the current project workspace.`);
   }
   return target;
@@ -57,11 +87,53 @@ export async function fileExists(path) {
 }
 
 /**
+ * Reads and parses the JSON file at `path`. A file that is missing or cannot be read rejects with
+ * the error from `readFile`, which carries its code, such as `ENOENT` or `EISDIR`. A file that is
+ * not valid JSON rejects with a `JSONParseError`, a `SyntaxError` that names the file and the
+ * line and column of the error, and has no `cause`: `JSON.parse`'s own message quotes the text
+ * around the error, which can hold a secret, so it never reaches a message, a cause, or a log
+ * (#1157).
+ *
  * @param {string} path
  * @returns {Promise<unknown>}
  */
 export async function readJSON(path) {
-  return JSON.parse(await readFile(path, "utf8"));
+  return parseJSON(await readFile(path, "utf8"), path);
+}
+
+/**
+ * Parses `text`, read from the file at `path`, as `readJSON` does: text that is not valid JSON
+ * throws a `JSONParseError`, never `JSON.parse`'s own error. For a caller that has already read
+ * the file, such as one that keeps the exact bytes it validated.
+ *
+ * @param {string} text
+ * @param {string} path Names the file in the error.
+ * @returns {unknown}
+ */
+export function parseJSON(text, path) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new JSONParseError(path, jsonSyntaxProblem(text));
+  }
+}
+
+/**
+ * The error `readJSON` and `parseJSON` throw for a file that is not valid JSON. `problem` says
+ * what is wrong and where, such as "InvalidSymbol at line 3, column 14", for a caller that names
+ * the file itself.
+ */
+export class JSONParseError extends SyntaxError {
+  /**
+   * @param {string} path
+   * @param {string} problem From `jsonSyntaxProblem`, so it holds no text from the file.
+   */
+  constructor(path, problem) {
+    super(
+      `${path} cannot be parsed as JSON: ${problem}. Correct the JSON there, then run the command again.`,
+    );
+    this.problem = problem;
+  }
 }
 
 /**

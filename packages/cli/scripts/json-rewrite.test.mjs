@@ -91,6 +91,51 @@ test("rewriteLossProblem reports a duplicate key and a number Calavera would spe
   );
 });
 
+test("rewriteLossProblem without values names the line of a number, never the number", async () => {
+  for (const [text, problem] of [
+    [
+      '{\n  "big": 12345678901234567890\n}',
+      /^holds a number on line 2 that Calavera would write in another spelling$/,
+    ],
+    [
+      '{\n  "a": 1,\n  "n": 1e400\n}',
+      /^holds a number on line 3 that is too large for Calavera to write$/,
+    ],
+  ]) {
+    const found =
+      (await rewriteLossProblem(text, "a.json", oxfmtFormatter, { withoutValues: true })) ?? "";
+    assert.match(found, problem, text);
+    assert.equal(/\d{3}/.test(found), false, found);
+  }
+});
+
+test("rewriteLossProblem names the line of a repeated key with or without values", async () => {
+  // A line number exposes no value, so apply's .claude/settings.json message names it too.
+  const found =
+    (await rewriteLossProblem(
+      '{\n  "model": "opus",\n  "model": "sonnet"\n}',
+      "a.json",
+      oxfmtFormatter,
+    )) ?? "";
+  assert.equal(
+    found,
+    'holds the key "model" more than once in one object, again on line 3, and only the last value would be kept',
+  );
+});
+
+test("rewriteLossProblem without values names the line of a repeated key as well as the key", async () => {
+  // #1078: the line is the repeated key's own, the second time it appears. A string before it that
+  // holds an escaped quote and a colon is not read as a key.
+  const text =
+    '{\n  "token": "a\\"b: c",\n  "inner": {\n    "secretKey": 1,\n    "secretKey": 2\n  }\n}';
+  const found =
+    (await rewriteLossProblem(text, "a.json", oxfmtFormatter, { withoutValues: true })) ?? "";
+  assert.equal(
+    found,
+    'holds the key "secretKey" more than once in one object, again on line 5, and only the last value would be kept',
+  );
+});
+
 test("rewriteLossProblem asks the project's formatter how a number is spelled", async () => {
   // Oxfmt writes 1e21 where JSON.stringify writes 1e+21, so the same text loses nothing in a
   // Vite+ project and changes in any other.
@@ -109,7 +154,7 @@ test("Given a vite.config.ts that prints, when its text would reach the file, th
   });
   const noisy = await loadProjectFormatter(project.root, "managed");
   const problem =
-    /vp fmt from vite-plus .* returned text for \.claude\/settings\.json that does not hold the values Calavera sent\. It begins: "\[dotenv@17\.2\.0\] injecting env \(3\) from \.env"/;
+    /vp fmt from vite-plus .* returned text for \.claude\/settings\.json that is not JSON, so something came with the formatted text, such as output that vite\.config\.ts printed\./;
   await assert.rejects(writeJSON(samples.shortArray, ".claude/settings.json", noisy), problem);
   // The number check formats through writeJSON too, so it reports the same cause.
   await assert.rejects(rewriteLossProblem('{"n": 1}', ".claude/settings.json", noisy), problem);

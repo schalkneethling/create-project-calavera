@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -34,8 +35,29 @@ const packedRegistryPreload = fileURLToPath(
 let workRoot;
 /** @type {Map<string, string | undefined>} */
 const previousNpmConfig = new Map();
-/** @type {Map<string, { packageName: string, version: string, path: string, integrity: string }>} */
+/** @type {Map<string, { packageName: string, version: string, path: string, url: string, integrity: string }>} */
 const packedArtifacts = new Map();
+/** @type {import("node:http").Server | undefined} */
+let tarballServer;
+
+/**
+ * Serves each packed tarball at /<artifact id>.tgz on a loopback port, because Calavera fetches
+ * artifact tarballs only from https URLs or loopback http URLs, never from a local path (#1194).
+ * @param {Map<string, { path: string }>} tarballs
+ */
+async function serveTarballs(tarballs) {
+  const server = createServer(async (request, response) => {
+    const tarball = tarballs.get(request.url?.slice(1, -".tgz".length) ?? "");
+    if (!tarball || !request.url?.endsWith(".tgz")) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/octet-stream" });
+    response.end(await readFile(tarball.path));
+  });
+  await new Promise((listening) => server.listen(0, "127.0.0.1", () => listening(undefined)));
+  return server;
+}
 
 async function artifactDirectories() {
   const entries = await readdir(artifactPackagesRoot, { withFileTypes: true });
@@ -140,7 +162,11 @@ async function installInFixture(name, ids) {
 before(async () => {
   workRoot = await mkdtemp(join(tmpdir(), "calavera-release-integration-"));
   const packed = await Promise.all((await artifactDirectories()).map(packArtifact));
-  for (const { id, ...details } of packed) packedArtifacts.set(id, details);
+  tarballServer = await serveTarballs(new Map(packed.map(({ id, path }) => [id, { path }])));
+  const { port } = /** @type {import("node:net").AddressInfo} */ (tarballServer.address());
+  for (const { id, ...details } of packed) {
+    packedArtifacts.set(id, { ...details, url: `http://127.0.0.1:${port}/${id}.tgz` });
+  }
   process.env.CALAVERA_PACKED_ARTIFACTS = JSON.stringify(Object.fromEntries(packedArtifacts));
   // Extraction reads npm configuration. Point it at a missing file so a developer's own user
   // .npmrc cannot change the result; the spawned CLI inherits this environment.
@@ -155,6 +181,7 @@ before(async () => {
 });
 
 after(async () => {
+  await new Promise((closed) => (tarballServer ? tarballServer.close(closed) : closed(undefined)));
   delete process.env.CALAVERA_PACKED_ARTIFACTS;
   delete process.env.npm_config_userconfig;
   for (const [name, value] of previousNpmConfig) process.env[name] = value;
@@ -342,16 +369,12 @@ test("init --apply lists the artifacts it would lock in its approval summary", a
     { cwd: projectDirectory, env: { ...process.env, NO_COLOR: "1" } },
   );
 
-  // The summary is drawn in a box that wraps long lines; compare its text without the frame. A
-  // FORCE_COLOR in the caller's environment overrides NO_COLOR, so strip escape sequences too.
+  // Compare the text without the Clack frame around the recipe summary. A FORCE_COLOR in the
+  // caller's environment overrides NO_COLOR, so strip escape sequences too.
   const summary = stripVTControlCharacters(stdout)
     .replace(/[│├╮╯─◇]/g, " ")
     .replace(/\s+/g, " ");
-  assert.match(
-    summary,
-    new RegExp(
-      `Artifacts to lock: ${id} \\(${escapeRegExp(`${packed.packageName}@${packed.version}`)}\\)`,
-    ),
-  );
+  // #1022: the grouped summary names the version apply locks and the destination it writes.
+  assert.match(summary, new RegExp(`Would lock ${id} ${escapeRegExp(packed.version)} and write`));
   assert.deepEqual(await snapshotDirectory(projectDirectory), before, "init --dry-run wrote files");
 });

@@ -14,8 +14,8 @@ const NODE_TEST_RUNNER_ID = "node:test";
  *   with the test files Stryker reads: the runner's default files, or the recipe's `testFiles`.
  */
 
-/** @returns {TestRunner[]} */
-function strykerTestRunners() {
+/** @returns {TestRunner[]} The runners integrationOptions.stryker.testRunner accepts; the first is the default. */
+export function strykerTestRunners() {
   return integrationCatalog.find(({ id }) => id === STRYKER_ID)?.testRunners ?? [];
 }
 

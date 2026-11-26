@@ -5,10 +5,23 @@
 // project.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { assembleReleasePlan } from "@changesets/assemble-release-plan";
+import { readConfig } from "@changesets/config";
+import { readPreState } from "@changesets/pre";
+import { readChangesets } from "@changesets/read";
+import { getPackages } from "@manypkg/get-packages";
+import semver from "semver";
+
 import packageJson from "../package.json" with { type: "json" };
-import { EARLIER_TEMPLATES, findEarlierGuidance } from "../src/utils/earlier-guidance.js";
+import {
+  EARLIER_TEMPLATES,
+  findEarlierGuidance,
+  normalizePublishedPin,
+} from "../src/utils/earlier-guidance.js";
 import {
   currentText,
   epochs,
@@ -77,7 +90,10 @@ test("Given a fixture, when it is read back as a project file, then the CLI name
 });
 
 test("Given a pinned setup note, then it names the release it pins and the kinds do not match each other", async () => {
-  const { id, releases } = epochs.mcp[epochs.mcp.length - 1];
+  // The latest template that more than two releases wrote, so the test can pin two of them.
+  const { id, releases } = /** @type {(typeof epochs.mcp)[number]} */ (
+    epochs.mcp.findLast(({ releases: written }) => written.length > 2)
+  );
   const text = await mcpText(id, "pnpm", releases[1]);
   assert.equal(findEarlierGuidance("mcp", text)?.description, releases[1]);
   assert.equal(findEarlierGuidance("guidance", text), undefined);
@@ -180,6 +196,99 @@ test("Given a version bump or a changed template, then the release check fails o
   assert.match(unlistedVersion(changed, "6.4.0") ?? "", /^6\.4\.0 is in no template/);
 });
 
+/**
+ * Issue #1219: the listed versions that npm does not have and that no release will publish.
+ * `normalizePublishedPin` treats a listed version older than package.json's as published, so a
+ * template may name an unpublished version only while it is newer: package.json's own version
+ * (between the Version Packages merge and the GitHub release that publishes it) and `next`, the
+ * version the pending changesets produce. Any other listed version newer than `previous`, the
+ * release before package.json's version, is a guess at a release that will not happen, such as
+ * 6.3.0 once a major changeset made the next release 7.0.0.
+ *
+ * @param {{ releases: string[] }[]} kindEpochs The templates of one kind.
+ * @param {{ previous: string, version: string, next: string }} versions
+ * @returns {string[]}
+ */
+function unexpectedListedVersions(kindEpochs, { previous, version, next }) {
+  return kindEpochs
+    .flatMap(({ releases }) => releases)
+    .filter((release) => semver.gt(release, previous) && release !== version && release !== next);
+}
+
+/** The version the pending changesets give create-project-calavera, read offline as Changesets does. */
+async function nextVersion() {
+  const root = fileURLToPath(new URL("../../..", import.meta.url));
+  const packages = await getPackages(root);
+  const { config, errors } = await readConfig(root, packages);
+  assert.equal(errors, undefined, "the Changesets config reads without errors");
+  // No `since` reference, so Changesets reads the files in .changeset and never asks Git.
+  const plan = assembleReleasePlan(
+    await readChangesets(root),
+    packages,
+    config,
+    await readPreState(root),
+  );
+  return plan.releases.find(({ name }) => name === packageJson.name)?.newVersion ?? version;
+}
+
+/** The newest release in CHANGELOG.md older than package.json's version. */
+async function previousRelease() {
+  const changelog = await readFile(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+  const releases = [...changelog.matchAll(/^## (\S+)$/gm)]
+    .map((match) => match[1])
+    .filter((release) => semver.valid(release) && semver.lt(release, version));
+  return releases.sort(semver.rcompare)[0];
+}
+
+test("Given the pending changesets, then the table names no unpublished version they will not produce", async () => {
+  const previous = await previousRelease();
+  assert.ok(previous, "CHANGELOG.md names a release before package.json's version");
+  // The boundary is strictly older than package.json's version, so on the Version Packages commit a
+  // guess listed between the last release and the new version is still flagged.
+  assert.ok(
+    semver.lt(previous, version),
+    `the release before ${version} is older than ${version}, not ${previous}`,
+  );
+  const next = await nextVersion();
+  for (const [file, kindEpochs] of [
+    ["AGENTS.md", epochs.guidance],
+    [".agents/calavera/mcp.md", epochs.mcp],
+  ]) {
+    assert.deepEqual(
+      unexpectedListedVersions(kindEpochs, { previous, version, next }),
+      [],
+      next === version
+        ? `${file}: after ${previous}, the templates may list only ${version}, because no pending changeset releases ${packageJson.name}. Add the changeset for the change that wrote the listed text, or remove the listed version, on main, in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`
+        : `${file}: after ${previous}, the templates may list only ${version} and ${next}, the version the pending changesets produce. Rename any other listed version to ${next}, on main, in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`,
+    );
+  }
+});
+
+test("Given a guessed next release, then the check fails on main and on the Version Packages commit", () => {
+  // #1219: #1089 listed 6.3.0, then a major changeset made the next release 7.0.0.
+  const guessed = [{ releases: ["6.1.0", "6.2.0", "6.2.1"] }, { releases: ["6.3.0"] }];
+  assert.deepEqual(
+    unexpectedListedVersions(guessed, { previous: "6.2.0", version: "6.2.1", next: "7.0.0" }),
+    ["6.3.0"],
+  );
+  // The Version Packages commit, after the release check asked for 7.0.0 to be listed too.
+  const both = [{ releases: ["6.1.0", "6.2.0", "6.2.1"] }, { releases: ["6.3.0", "7.0.0"] }];
+  assert.deepEqual(
+    unexpectedListedVersions(both, { previous: "6.2.1", version: "7.0.0", next: "7.0.0" }),
+    ["6.3.0"],
+  );
+  // Renamed to the version the changesets produce, the table passes before and after the bump.
+  const renamed = [{ releases: ["6.1.0", "6.2.0", "6.2.1"] }, { releases: ["7.0.0"] }];
+  assert.deepEqual(
+    unexpectedListedVersions(renamed, { previous: "6.2.0", version: "6.2.1", next: "7.0.0" }),
+    [],
+  );
+  assert.deepEqual(
+    unexpectedListedVersions(renamed, { previous: "6.2.1", version: "7.0.0", next: "7.0.0" }),
+    [],
+  );
+});
+
 test("Given an earlier release's text, then the description names one release, a range of releases, or the pinned release", async () => {
   const description = async (id) =>
     findEarlierGuidance("guidance", await guidanceText(id))?.description;
@@ -192,4 +301,32 @@ test("Given an earlier release's text, then the description names one release, a
     findEarlierGuidance("mcp", await mcpText(unpinned.id, "npm", ""))?.description,
     `${unpinned.releases[0]} to ${unpinned.releases[unpinned.releases.length - 1]}`,
   );
+});
+
+test("Given a pinned version, then normalizePublishedPin normalizes it only when npm has it", () => {
+  const pin = (/** @type {string} */ value) => `npx --package create-project-calavera@${value} mcp`;
+  const normalized = "npx --package create-project-calavera@{{version}} mcp";
+  // #1219: a listed version older than the one this checkout writes was published before it.
+  for (const published of ["5.0.0", "2.3.0-next.2", "6.2.0"]) {
+    assert.equal(normalizePublishedPin(pin(published), "6.2.1"), normalized, published);
+  }
+  // The version this checkout writes counts, listed or not, so its own entries stay Calavera's.
+  assert.equal(normalizePublishedPin(pin("6.2.1"), "6.2.1"), normalized);
+  assert.equal(normalizePublishedPin(pin("99.0.0"), "99.0.0"), normalized);
+  // A listed version newer than this checkout's, such as the upcoming 7.0.0, is not published yet.
+  assert.equal(normalizePublishedPin(pin("7.0.0"), "6.2.1"), undefined);
+  // The Version Packages commit for 7.0.0: 7.0.0 is the version written, and 6.2.1 is published.
+  // 6.3.0, which #1089 listed as a guess before a major changeset made the next release 7.0.0,
+  // is no longer listed, so it counts only as an unlisted version. The table test above keeps
+  // such a guess out of the list, which is what stops it counting as an older release (#1219).
+  assert.equal(normalizePublishedPin(pin("7.0.0"), "7.0.0"), normalized);
+  assert.equal(normalizePublishedPin(pin("6.2.1"), "7.0.0"), normalized);
+  assert.equal(normalizePublishedPin(pin("6.3.0"), "7.0.0"), undefined);
+  assert.equal(normalizePublishedPin(pin("5.0.0"), "4.1.0"), undefined);
+  // An unlisted version, an unlisted prerelease, no pin, the placeholder, and no written version.
+  for (const text of [pin("99.0.0"), pin("6.2.1-next.0"), "npx create-project-calavera mcp"]) {
+    assert.equal(normalizePublishedPin(text, "6.2.1"), undefined, text);
+  }
+  assert.equal(normalizePublishedPin(normalized, "6.2.1"), undefined);
+  assert.equal(normalizePublishedPin(pin("5.0.0"), undefined), undefined);
 });

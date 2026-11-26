@@ -7,8 +7,12 @@
 // notice from #675), a check asserts the property Section 0 states, not a guessed snapshot.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
+
+import semver from "semver";
 
 import { snapshotDirectory } from "../packages/cli/scripts/project-snapshot.mjs";
 import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
@@ -20,7 +24,7 @@ import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
  *   dirs: ReturnType<typeof import("./rehearse-cli-experience.mjs").runDirectories>,
  *   env: NodeJS.ProcessEnv,
  *   registry: { url: string, requests: string[] },
- *   calavera: { version: string, bin: string, mcpBin: string },
+ *   calavera: { version: string, bin: string, mcpBin: string, packageDirectory: string },
  *   repositoryRoot: string,
  *   run: (command: string, args: string[], options?: { cwd?: string, env?: NodeJS.ProcessEnv, timeout?: number }) => Promise<CommandResult>,
  *   runOrThrow: (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>,
@@ -182,6 +186,130 @@ async function assertManaged(context, directory) {
 }
 
 /**
+ * Why a Plug'n'Play read found no version, by the exit code the read script ends with. From a
+ * failed read, the report takes only the exit code and these fixed texts, never the child's
+ * output, because that output can quote the files it read, such as a line of a manifest that is
+ * not valid JSON. The codes start at 64, above the exit codes Node.js reserves for itself.
+ */
+const PNP_READ_FAILURES = {
+  64: "it installed no vite-plus that Yarn's runtime resolves",
+  65: "it installed a vite-plus/package.json that cannot be read",
+  66: "it installed a vite-plus/package.json that is not valid JSON",
+  67: "it installed a vite-plus/package.json that names no version",
+};
+
+/**
+ * Prints the version of the `vite-plus` package the project folder given as the first argument
+ * depends on, or exits with a code from `PNP_READ_FAILURES`. The fixed text it writes to stderr
+ * is for a person who runs the script by hand; the rehearsal reads only the exit code. Yarn's `pnpapi` resolves the manifest from that folder without depending on the current
+ * folder, and Yarn's runtime lets `fs` read inside the zip archive it points to.
+ */
+const PNP_VITE_PLUS_VERSION = `const { readFileSync } = require("node:fs");
+const failures = ${JSON.stringify(PNP_READ_FAILURES)};
+const fail = (code) => {
+  process.stderr.write(failures[code] + "\\n");
+  process.exit(code);
+};
+let file;
+try {
+  file = require("pnpapi").resolveToUnqualified("vite-plus/package.json", process.argv[1]);
+} catch {
+  fail(64);
+}
+let text;
+try {
+  text = readFileSync(file, "utf8");
+} catch {
+  fail(65);
+}
+let version;
+try {
+  version = JSON.parse(text).version;
+} catch {
+  fail(66);
+}
+if (typeof version !== "string" || version === "") fail(67);
+process.stdout.write(version);`;
+
+/**
+ * The version of `vite-plus` installed in `project`, or why none could be read. A Yarn project
+ * that uses Plug'n'Play has no node_modules folder: its packages stay in zip archives that only
+ * Yarn's runtime, `.pnp.cjs`, resolves, so a Node.js child loads that runtime to read the version.
+ * Vite+ 1.6.0 writes `nodeLinker: node-modules` for a Yarn project it creates, but a `.yarnrc.yml`
+ * that already exists wins, and Yarn removes `.pnp.cjs` when it installs into node_modules, so
+ * `.pnp.cjs` decides which layout the project uses.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} project
+ */
+async function installedVitePlus(context, project) {
+  const pnp = join(project, ".pnp.cjs");
+  if (existsSync(pnp)) {
+    const result = await context.run(
+      "node",
+      // Yarn's runtime maps only real paths to the project, so a folder reached through a symbolic
+      // link, as the macOS temporary folder is, would resolve nothing. A trailing slash makes the
+      // folder itself the issuer, not a file named like it.
+      ["--require", pnp, "--eval", PNP_VITE_PLUS_VERSION, "--", `${await realpath(project)}/`],
+    );
+    // A preload or runtime that prints to stdout would otherwise reach the report, so only a clean
+    // version is taken from the child; anything else gets a fixed reason without its output.
+    if (result.exitCode === 0 && semver.valid(result.stdout)) return { version: result.stdout };
+    if (result.exitCode === 0) {
+      return {
+        problem: `the Plug'n'Play read printed something other than a version, and its output is left out because it can quote the files it read (${pnp} reading vite-plus/package.json)`,
+      };
+    }
+    // A short label instead of the command, which would print the whole script.
+    const label = `${pnp} reading vite-plus/package.json`;
+    const reason =
+      PNP_READ_FAILURES[/** @type {keyof typeof PNP_READ_FAILURES} */ (result.exitCode)] ??
+      "the Plug'n'Play read ended without a version, and its output is left out because it can quote the files it read";
+    return { problem: `${reason} (${label}: ${describeExit(result)})` };
+  }
+  const manifest = join(project, "node_modules", "vite-plus", "package.json");
+  if (!existsSync(manifest)) {
+    return {
+      problem:
+        "it installed nothing: there is no node_modules/vite-plus/package.json and no .pnp.cjs",
+    };
+  }
+  let version;
+  try {
+    version = JSON.parse(await readFile(manifest, "utf8")).version;
+  } catch {
+    // The parser's message can quote the file, so only the file is named.
+    return { problem: "it installed a node_modules/vite-plus/package.json that is not valid JSON" };
+  }
+  if (typeof version !== "string" || version === "") {
+    return { problem: "it installed a node_modules/vite-plus/package.json that names no version" };
+  }
+  return { version };
+}
+
+/**
+ * Throws when `project` does not have the run's Vite+ installed. A package manager that holds back
+ * releases younger than its minimum release age, as pnpm and Yarn 4 do, can install an older Vite+
+ * than the run asked for, and every later check would then test that release instead.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} project
+ * @param {string} subject what installed Vite+, as the failure names it
+ * @param {string} command
+ * @param {string} [versionLabel] the row of the versions table that records what was installed
+ */
+async function assertVitePlusVersion(context, project, subject, command, versionLabel) {
+  const installed = await installedVitePlus(context, project);
+  if (versionLabel) context.versions[versionLabel] = installed.version ?? "not installed";
+  if (installed.version === context.vitePlusVersion) return;
+  throw new CheckFailure({
+    expected: `${subject} to install Vite+ ${context.vitePlusVersion}`,
+    actual: installed.problem ?? `it installed ${installed.version}`,
+    command,
+  });
+}
+
+/**
  * The launchers of Section 0 item 1, each with the runner it implies for `vp create` (#909: the
  * runner follows the launcher). The runner is read from the "Command:" line --new prints.
  */
@@ -279,7 +407,9 @@ function newProjectCheck(launcher) {
           command: result.display,
         });
       }
-      await assertManaged(context, join(cwd, "app"));
+      const project = join(cwd, "app");
+      await assertVitePlusVersion(context, project, launcher.label, result.display);
+      await assertManaged(context, project);
     },
   };
 }
@@ -295,9 +425,15 @@ const NAME_CHARACTER = /[\w./@-]/;
  * How many times `name` appears in `text` as a whole word: not as part of a longer path or name.
  *
  * @param {string} text
- * @param {string} name
+ * @param {string} name A non-empty name. An empty name matches at the same position forever, so
+ *   the search would never end; it throws a RangeError instead (#1226).
  */
 export function countMentions(text, name) {
+  if (name === "") {
+    throw new RangeError(
+      "countMentions needs a non-empty name, because the search for an empty one never ends.",
+    );
+  }
   let count = 0;
   let from = 0;
   for (;;) {
@@ -334,7 +470,9 @@ export function isHeading(line) {
 /**
  * The name an item is printed under: the item itself, or the nearest directory above it that the
  * output names, because a command may report a directory it wrote, such as a skill folder, as one
- * line. Undefined when the output names neither.
+ * line. Undefined when the output names neither. An absolute path splits into an empty first part,
+ * so the empty root is never tried as a name: the path is matched by its full text, or by a
+ * directory above it that the output names (#1226).
  *
  * @param {string} output
  * @param {string} item
@@ -343,7 +481,7 @@ function printedName(output, item) {
   const parts = item.split("/");
   for (let length = parts.length; length > 0; length -= 1) {
     const candidate = parts.slice(0, length).join("/");
-    if (countMentions(output, candidate) > 0) return candidate;
+    if (candidate !== "" && countMentions(output, candidate) > 0) return candidate;
   }
   return undefined;
 }
@@ -363,15 +501,34 @@ export function listingViolations(output, items, statements = []) {
   // them, so its line does not count as a mention. #617 keeps one line per integration with the
   // package in parentheses only when the names differ, so an integration line that names its
   // package does count. A quoted value is the exact text a command writes, such as a script's
-  // command or the lines of an ignore block, so a name inside it does not count either.
+  // command or the lines of an ignore block, so a name inside it does not count either. A
+  // package.json script's name is a key in the manifest, not the package it may share a name with,
+  // such as the knip script that runs the knip package (#1128), so it does not count either.
+  // The mask applies only to a line in the Scripts group that has one of the exact shapes
+  // scriptLines in apply-summary.js prints, so other prose that mentions a script still counts
+  // (#1144). A hook group line under the settings file names the artifact whose group it is,
+  // because every artifact's groups sit under the file's one line (owner decision on #1145), so
+  // the artifact named there does not count either. That mask applies only to a line in the
+  // Artifacts group with one of the exact shapes hookGroupChangeLine in hook-group-lines.js, or
+  // settingsFileLines in apply-summary.js, prints.
   const fixed = new Set(statements);
+  let group = "";
   const lines = output
     .split("\n")
     .filter((line) => !isCommandLine(line) && !fixed.has(line.trim()))
-    .map((line) => line.replace(QUOTED_VALUE, '""'));
+    .map((line) => {
+      if (isHeading(line)) group = plainLine(line);
+      const masked = line.replace(QUOTED_VALUE, '""');
+      if (group === "Scripts:") return withoutNamedSpans(masked, SCRIPT_LINES);
+      if (group === "Artifacts:") return withoutNamedSpans(masked, HOOK_GROUP_LINES);
+      return masked;
+    });
   output = lines.join("\n");
   const firstHeading = lines.findIndex(isHeading);
-  const names = new Map(items.map((item) => [item, printedName(output, item)]));
+  // An empty item names nothing the output could print, so it is reported, not looked for (#1226).
+  const names = new Map(
+    items.filter((item) => item !== "").map((item) => [item, printedName(output, item)]),
+  );
   return [...new Set(names.values())]
     .flatMap((name) => {
       if (name === undefined) return [];
@@ -385,11 +542,69 @@ export function listingViolations(output, items, statements = []) {
       [...names]
         .filter(([, name]) => name === undefined)
         .map(([item]) => `${item} is printed 0 times`),
+    )
+    .concat(
+      items.includes("") ? ["an item has an empty name, so the check cannot look for it"] : [],
     );
 }
 
 // A JSON string literal, as Calavera quotes a script value or an ignore line.
 const QUOTED_VALUE = /"(?:[^"\\]|\\.)*"/g;
+
+// The lines scriptLines in apply-summary.js prints, once a quoted value is reduced to "", with the
+// script names they hold in named groups, "name" and a rename's "target": "Would add script knip:
+// \"\"", "Renamed script lint to lint:styles: \"\"", "Changed script knip from \"\" to \"\"", "Would
+// omit script knip: <reason>", "Would omit vp check from script quality: <reason>", or "Scripts
+// already set: knip, lint:styles". A name can hold colons, as lint:styles does, so only a colon
+// before a space ends it.
+const SCRIPT_LINES = [
+  /^(?:Would add|Added|Would remove|Removed) script (?<name>\S+?): ""$/d,
+  /^(?:Would omit|Omitted) script (?<name>\S+?): /d,
+  /^(?:Would rename|Renamed) script (?<name>\S+?) to (?<target>\S+?): ""$/d,
+  /^(?:Would change|Changed) script (?<name>\S+?) from "" to ""$/d,
+  /^(?:Would omit|Omitted) \S.*? from script (?<name>\S+?): /d,
+  /^Scripts already set: (?<name>.+)/d,
+];
+
+// The lines the apply summary prints under the settings file for each artifact's hook groups,
+// with the artifact ID in the named group "artifact", and in "again" where a removal says the
+// recipe no longer selects that same artifact. A group is printed as JSON, so once its strings are
+// reduced to "" it reads as an object such as {"":[{"":""}]}: "Would add a SessionStart group for
+// skill-a: {...}", "Replaced the PreToolUse group for skill-a: {...} with {...}", "Would remove
+// the Stop group for skill-a, because the recipe no longer selects skill-a: {...}", or "Already
+// holds the hook groups for skill-a" (#1145). An artifact ID holds no slash, so a path in its
+// place is left counted.
+const HOOK_GROUP_LINES = [
+  /^(?:Would add|Added) a \S+ group for (?<artifact>[^\s/]+): \{.*\}$/d,
+  /^(?:Would replace|Replaced) the \S+ group for (?<artifact>[^\s/]+): \{.*\} with \{.*\}$/d,
+  /^(?:Would remove|Removed) the \S+ group for (?<artifact>[^\s/]+): \{.*\}$/d,
+  /^(?:Would remove|Removed) the \S+ group for (?<artifact>[^\s/]+), because the recipe no longer selects (?<again>\k<artifact>): \{.*\}$/d,
+  /^Already holds the hook groups for (?<artifact>[^\s/]+)$/d,
+];
+
+/**
+ * A line with the names one of `shapes` holds in its named groups removed, or the line as it is
+ * when it has none of the shapes: a script line of the Scripts group, whose script names are keys
+ * in the manifest, not the package one may share a name with, or a hook group line of the
+ * Artifacts group, whose artifact the summary lists elsewhere (#1128, #1145).
+ *
+ * @param {string} line
+ * @param {RegExp[]} shapes
+ */
+function withoutNamedSpans(line, shapes) {
+  const text = plainLine(line);
+  for (const shape of shapes) {
+    const spans = shape.exec(text)?.indices.groups;
+    if (spans === undefined) continue;
+    // From the last name back, so cutting one does not move the start of the one before it. The
+    // match's own positions, not a search for the name, because a script can share its name with
+    // a word of the line, such as a script named add.
+    return Object.values(spans)
+      .sort(([a], [b]) => b - a)
+      .reduce((rest, [start, end]) => rest.slice(0, start) + rest.slice(end), text);
+  }
+  return line;
+}
 
 /**
  * Whether a line is a command, with an optional label such as "Dev dependency install command:".
@@ -507,7 +722,9 @@ function assertListing(result, items, statements = []) {
 /**
  * The files, dependencies, and artifacts a JSON result names, wherever they sit in it: every
  * `path`, `destination`, and `file` value, the names in a dependency list or the keys of a
- * dependency map, and artifact IDs.
+ * dependency map, and artifact IDs. An `integrationInputs` entry's `path` is the input's place in
+ * the recipe, such as `integrationOptions.github-repository-controls.defaultBranch`, not a file,
+ * and the summary prints the input by its name and value, so the entries name no item (#1143).
  *
  * @param {unknown} value
  * @returns {string[]}
@@ -527,6 +744,7 @@ export function namedItems(value) {
       return;
     }
     for (const [name, child] of Object.entries(node)) {
+      if (name === "integrationInputs") continue;
       if (/dependencies$/i.test(name) && Array.isArray(child)) {
         // ApplyResult.dependencies is a list of package names.
         for (const entry of child) {
@@ -665,9 +883,10 @@ async function snapshotProject(directory) {
  * @param {string} directory
  * @param {Record<string, string>} before
  * @param {string} command
+ * @param {Record<string, string>} [after] A snapshot taken earlier; a new one when left out.
  */
-async function assertUnchanged(context, directory, before, command) {
-  const after = await snapshotProject(directory);
+async function assertUnchanged(context, directory, before, command, after) {
+  after ??= await snapshotProject(directory);
   const changed = Object.keys({ ...before, ...after }).filter(
     (path) => before[path] !== after[path],
   );
@@ -692,22 +911,13 @@ function flowProject(context) {
     await mkdir(cwd, { recursive: true });
     await context.runOrThrow("pnpm", ["create", "vite-plus", ...SCAFFOLD_ARGS], { cwd });
     const project = join(cwd, "app");
-    // pnpm holds back releases younger than its minimum release age, so it can install an older
-    // Vite+ than the run asked for. Record what was installed, and stop if it is not that version.
-    const installed = await readFile(
-      join(project, "node_modules", "vite-plus", "package.json"),
-      "utf8",
-    )
-      .then((text) => String(JSON.parse(text).version))
-      .catch(() => "not installed");
-    context.versions["Vite+ installed in the flow project"] = installed;
-    if (installed !== context.vitePlusVersion) {
-      throw new CheckFailure({
-        expected: `the flow project to install Vite+ ${context.vitePlusVersion}`,
-        actual: `it installed ${installed}`,
-        command: `(cd ${cwd} && pnpm create vite-plus ${SCAFFOLD_ARGS.join(" ")})`,
-      });
-    }
+    await assertVitePlusVersion(
+      context,
+      project,
+      "the flow project",
+      `(cd ${cwd} && pnpm create vite-plus ${SCAFFOLD_ARGS.join(" ")})`,
+      "Vite+ installed in the flow project",
+    );
     return project;
   });
 }
@@ -717,6 +927,10 @@ function flowInit(context) {
   return shared(context, "flow-init", async () => {
     const project = await flowProject(context);
     const before = await snapshotProject(project);
+    // The scripts Vite+ scaffolded, so the eject checks can tell them from the ones Calavera adds.
+    const scaffoldScripts = Object.keys(
+      JSON.parse(await readFile(join(project, "package.json"), "utf8")).scripts ?? {},
+    );
     const result = await context.run(
       context.calavera.bin,
       ["--init", "--yes", "--mcp-harness", "skip"],
@@ -724,16 +938,57 @@ function flowInit(context) {
         cwd: project,
       },
     );
-    return { project, before, after: await snapshotProject(project), result };
+    return { project, before, after: await snapshotProject(project), result, scaffoldScripts };
   });
+}
+
+/**
+ * What the flow recipe adds to the default profile, so the listing checks also cover output that
+ * names them (#1146). Knip adds a `knip` script, which shares its name with the package, and the
+ * protected-branch guard writes `.claude/settings.json` and wires `.vite-hooks` (#1128). Both
+ * artifacts are installed from the release candidate, which packs every artifact package.
+ */
+const FLOW_TOOLS = ["knip"];
+const FLOW_AI_ARTIFACTS = ["skill-release-with-confidence", "skill-protected-branch-guard"];
+
+/**
+ * The branch the flow commit is made on. `vp create` makes `main`, because the run's Git
+ * configuration sets init.defaultBranch to main, so the guard protects `main` and refuses a commit
+ * there. The rehearsal does what the apply summary tells a person to do: create a feature branch
+ * and commit there.
+ */
+export const FLOW_BRANCH = "apply-calavera";
+
+/**
+ * What a recipe is missing of the tools and artifacts the flow asked init for. A selection that
+ * init drops would leave the listing checks passing without covering it.
+ *
+ * @param {string} text The recipe init wrote.
+ * @returns {string[]}
+ */
+export function missingFlowSelections(text) {
+  /** @type {{ integrations?: unknown, ai?: unknown }} */
+  let recipe;
+  try {
+    recipe = JSON.parse(text);
+  } catch {
+    return ["calavera.config.json is not JSON"];
+  }
+  const integrations = Array.isArray(recipe?.integrations) ? recipe.integrations : [];
+  const artifacts = Array.isArray(recipe?.ai) ? recipe.ai : [];
+  return [
+    ...FLOW_TOOLS.filter((id) => !integrations.includes(id)).map((id) => `integration ${id}`),
+    ...FLOW_AI_ARTIFACTS.filter(
+      (id) => !artifacts.some((/** @type {{ id?: unknown }} */ entry) => entry?.id === id),
+    ).map((id) => `AI artifact ${id}`),
+  ];
 }
 
 /** The recipe the apply checks use: written by `init --yes`, which composes the default recipe. @param {RehearsalContext} context */
 function flowRecipe(context) {
   return shared(context, "flow-recipe", async () => {
     const { project } = await flowInit(context);
-    // --profile is needed: without it, init asks for one even with --yes. One artifact is added so
-    // the apply checks also cover an artifact installed from the release candidate.
+    // --profile is needed: without it, init asks for one even with --yes.
     const result = await context.runOrThrow(
       context.calavera.bin,
       [
@@ -743,8 +998,8 @@ function flowRecipe(context) {
         "default",
         "--package-manager",
         "pnpm",
-        "--ai-artifact",
-        "skill-release-with-confidence",
+        ...FLOW_TOOLS.flatMap((id) => ["--tool", id]),
+        ...FLOW_AI_ARTIFACTS.flatMap((id) => ["--ai-artifact", id]),
       ],
       { cwd: project },
     );
@@ -755,6 +1010,14 @@ function flowRecipe(context) {
       throw new CheckFailure({
         expected: "init to write calavera.config.json",
         actual: `no calavera.config.json\n${tail(result.output)}`,
+        command: result.display,
+      });
+    }
+    const missing = missingFlowSelections(written);
+    if (missing.length > 0) {
+      throw new CheckFailure({
+        expected: `calavera.config.json to select ${[...FLOW_TOOLS, ...FLOW_AI_ARTIFACTS].join(", ")}`,
+        actual: `missing: ${missing.join(", ")}`,
         command: result.display,
       });
     }
@@ -797,6 +1060,7 @@ function flowApply(context) {
 function flowCommit(context) {
   return shared(context, "flow-commit", async () => {
     const { project } = await flowApply(context);
+    await context.runOrThrow("git", ["switch", "--create", FLOW_BRANCH], { cwd: project });
     await context.runOrThrow("git", ["add", "--all"], { cwd: project });
     // No --no-verify: the commit goes through the Vite+ pre-commit hook. Git's trace2 event log
     // records every hook it runs, which proves the hook ran rather than only that one is configured.
@@ -1157,10 +1421,300 @@ const driftChecks = [
   }),
 ];
 
+// ---------------------------------------------------------------------------------------------
+// Section 0 item 6: eject on the --init project (#678, #1074, ADR-0017).
+
+/**
+ * The kinds of item that `--yes` leaves for an interactive approval in a project nobody edited:
+ * the recipe and the extracted package folders, which have no check (ADR-0017, Consequences).
+ */
+const KINDS_YES_LEAVES = new Set(["recipe", "package-folder"]);
+
+/**
+ * The paths that may remain after `eject --yes`, read from the dry run's JSON: what ADR-0017's
+ * Consequences keep, which is the recipe, the package folders, the records `--yes` keeps while one
+ * of those needs it (`keptRecord`), and the footprint text eject keeps and reports. The rehearsal
+ * project has no MCP harness (`--mcp-harness skip`) and nobody edits it, so any other item `--yes`
+ * leaves, such as an MCP entry whose rewrite carries a note (Decision 5), fails the check.
+ *
+ * @param {{ items?: Array<{ kind: string, path: string, matchesRecords: boolean, keptRecord?: true }>, reported?: Array<{ path: string }> }} report
+ */
+function pathsYesMayLeave(report) {
+  return [
+    ...(report.items ?? [])
+      .filter(
+        (item) => item.keptRecord || (!item.matchesRecords && KINDS_YES_LEAVES.has(item.kind)),
+      )
+      .map(({ path }) => path),
+    ...(report.reported ?? []).map(({ path }) => path),
+  ];
+}
+
+/**
+ * The candidate's own footprint list (ADR-0017 Decision 2), from the `eject.js` it ships, so the
+ * rehearsal and `eject` cannot disagree about what counts. Each path that is a folder becomes the
+ * files inside it, so a folder that may stay, such as `.calavera/packages`, cannot hide a package
+ * the plan never named.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} project
+ */
+async function remainingFootprint(context, project) {
+  const ejectModule = join(context.calavera.packageDirectory, "src", "eject.js");
+  const { footprintIn } = await import(pathToFileURL(ejectModule).href);
+  /** @type {string[]} */
+  const remaining = [];
+  for (const path of /** @type {string[]} */ (await footprintIn(project))) {
+    const absolute = join(project, path);
+    // lstat, not stat: a symbolic link, even a dangling one, is a footprint path of its own.
+    if (!(await lstat(absolute)).isDirectory()) {
+      remaining.push(path);
+      continue;
+    }
+    const files = Object.keys(await snapshotDirectory(absolute))
+      .filter((entry) => !entry.endsWith("/"))
+      .map((entry) => relative(project, entry));
+    remaining.push(...(files.length > 0 ? files : [path]));
+  }
+  return remaining;
+}
+
+/**
+ * `eject --dry-run` and `eject --yes` on a copy of the flow project after apply and the commit,
+ * so eject cannot change the project the other checks share.
+ *
+ * @param {RehearsalContext} context
+ */
+function flowEject(context) {
+  return shared(context, "flow-eject", async () => {
+    const source = await flowCommit(context).catch(async () => (await flowApply(context)).project);
+    const project = join(context.dirs.projects, "eject");
+    await rm(project, { recursive: true, force: true });
+    await cp(source, project, { recursive: true, verbatimSymlinks: true });
+    const before = await snapshotProject(project);
+    const json = await context.run(context.calavera.bin, ["eject", "--dry-run", "--json"], {
+      cwd: project,
+    });
+    const dryRun = await context.run(context.calavera.bin, ["eject", "--dry-run"], {
+      cwd: project,
+    });
+    const afterDryRun = await snapshotProject(project);
+    const yes = await context.run(context.calavera.bin, ["eject", "--yes"], { cwd: project });
+    const afterYes = await snapshotProject(project);
+    return { project, before, json, dryRun, afterDryRun, yes, afterYes };
+  });
+}
+
+/**
+ * What `eject --yes` changed beyond its dry run's plan, one line per path. ADR-0017 Decision 3
+ * says eject keeps everything outside the footprint, such as managed files, kept AI artifacts,
+ * hook wiring, and integration blocks in `.gitignore`, so every path that changed must be a plan
+ * item's `path` or lie under one. A removed folder counts as planned when it held at least one
+ * file and every file it held was planned, because eject removes a Calavera folder that its last
+ * item leaves empty. An empty removed folder counts only inside Calavera's own folders. Each edit
+ * `--yes` makes must leave exactly the `contents` the dry run showed. Every item `--yes` leaves
+ * for an interactive run (`keptRecord`, or not `matchesRecords`), such as the recipe, the lock,
+ * and the package folders, must stay as it was, down to each file below it. An MCP entry's
+ * `contents` stay out of the JSON (ADR-0017, Amendment 3), so only the path rule covers it.
+ *
+ * @param {string} project
+ * @param {{ items?: Array<{ kind: string, path: string, action?: string, matchesRecords: boolean, keptRecord?: true, contents?: string }>, ejectedBlock?: { path: string } }} report
+ * @param {Record<string, string>} before The snapshot after the dry run.
+ * @param {Record<string, string>} after The snapshot after `--yes`.
+ */
+async function unplannedEjectChanges(project, report, before, after) {
+  const items = report.items ?? [];
+  /** @param {string} key A snapshot key: an absolute path, with a trailing `/` for a folder. */
+  const pathOf = (key) => relative(project, key);
+  /** @param {string} path @param {string} itemPath */
+  const atOrUnder = (path, itemPath) => path === itemPath || path.startsWith(`${itemPath}/`);
+  /** @param {string} path */
+  // ADR-0017, Amendment 5: the `ejected` block is no item, but it changes the file it names.
+  const blockPath = report.ejectedBlock?.path;
+  const planned = (path) => items.some((item) => atOrUnder(path, item.path)) || path === blockPath;
+  /** @param {string} key */
+  const removedFolderAllowed = (key) => {
+    const files = Object.keys(before).filter(
+      (entry) => entry.startsWith(key) && !entry.endsWith("/"),
+    );
+    if (files.length > 0) return files.every((entry) => planned(pathOf(entry)));
+    const path = pathOf(key);
+    return atOrUnder(path, ".calavera") || path === ".agents/calavera";
+  };
+  /** @param {string} key */
+  const describe = (key) => {
+    const change = !(key in after) ? "removed" : !(key in before) ? "added" : "changed";
+    return { path: `${pathOf(key)}${key.endsWith("/") ? "/" : ""}`, change };
+  };
+  const changed = Object.keys({ ...before, ...after })
+    .filter((key) => before[key] !== after[key])
+    .sort();
+  const problems = changed
+    .filter((key) => !planned(pathOf(key)) && !(!(key in after) && removedFolderAllowed(key)))
+    .map((key) => {
+      const { path, change } = describe(key);
+      return `${path} (${change})`;
+    });
+  for (const item of items) {
+    if (item.keptRecord || !item.matchesRecords) {
+      for (const key of changed.filter((entry) => atOrUnder(pathOf(entry), item.path))) {
+        const { path, change } = describe(key);
+        const left = pathOf(key) === item.path ? "it" : item.path;
+        problems.push(`${path} (${change}, although --yes leaves ${left})`);
+      }
+    } else if (item.action === "edit" && item.kind !== "mcp-entry") {
+      const text = await readFile(join(project, item.path), "utf8").catch(() => undefined);
+      if (text !== item.contents) problems.push(`${item.path} (not the text the dry run planned)`);
+    }
+  }
+  return problems;
+}
+
+/** The dry run's report, which every eject check reads. @param {RehearsalContext} context */
+async function ejectPlan(context) {
+  const { json } = await flowEject(context);
+  assertExitZero(json);
+  return parseJson(json);
+}
+
+const ejectChecks = [
+  {
+    id: "eject-dry-run-output",
+    name: "eject --dry-run changes nothing and prints every item once, under headings",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, before, dryRun, afterDryRun } = await flowEject(context);
+      const report = await ejectPlan(context);
+      assertExitZero(dryRun);
+      await assertUnchanged(context, project, before, dryRun.display, afterDryRun);
+      assertListing(dryRun, namedItems(report));
+    },
+  },
+  {
+    id: "eject-yes-footprint",
+    name: "eject --yes prints every item once, under headings, and leaves only the footprint ADR-0017 keeps and reports",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, yes } = await flowEject(context);
+      const report = await ejectPlan(context);
+      assertExitZero(yes);
+      assertListing(yes, namedItems(report));
+      const allowed = pathsYesMayLeave(report);
+      const left = (await remainingFootprint(context, project)).filter(
+        (path) => !allowed.some((keep) => path === keep || path.startsWith(`${keep}/`)),
+      );
+      if (left.length > 0) {
+        throw new CheckFailure({
+          expected: `only the footprint ADR-0017 keeps after --yes: ${allowed.join(", ") || "nothing"}`,
+          actual: `still in the project:\n${left.join("\n")}`,
+          command: yes.display,
+        });
+      }
+      const { afterDryRun, afterYes } = await flowEject(context);
+      const unplanned = await unplannedEjectChanges(project, report, afterDryRun, afterYes);
+      if (unplanned.length > 0) {
+        const outside = unplanned.filter((line) => /\((removed|added|changed)\)$/.test(line));
+        const edits = unplanned.filter((line) => !outside.includes(line));
+        throw new CheckFailure({
+          expected:
+            "eject --yes to change only the items its dry run planned, and each planned edit to leave the text the dry run showed (ADR-0017 Decisions 2 and 3)",
+          actual: [
+            ...(outside.length > 0 ? ["changed outside the plan:", ...outside] : []),
+            ...edits,
+          ].join("\n"),
+          command: yes.display,
+        });
+      }
+      // A file eject does not name in .calavera/ or .agents/calavera/ is one Calavera wrote but
+      // eject does not know, so the footprint list in ADR-0017 Decision 2 is behind.
+      if ((report.kept ?? []).length > 0) {
+        throw new CheckFailure({
+          expected: "eject to name every file in Calavera's folders that a fresh project holds",
+          actual: `eject keeps files it does not name: ${report.kept.join(", ")}`,
+          command: (await flowEject(context)).json.display,
+        });
+      }
+    },
+  },
+  {
+    id: "eject-keeps-toolchain",
+    name: "After eject --yes, vp check and every script Calavera added exit 0",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, yes } = await flowEject(context);
+      assertExitZero(yes);
+      const { scaffoldScripts } = await flowInit(context);
+      const scripts = Object.keys(
+        JSON.parse(await readFile(join(project, "package.json"), "utf8")).scripts ?? {},
+      ).filter((name) => !scaffoldScripts.includes(name));
+      for (const args of [["exec", "vp", "check"], ...scripts.map((name) => ["run", name])]) {
+        const result = await context.run("pnpm", args, { cwd: project, timeout: 5 * 60_000 });
+        if (result.exitCode !== 0) {
+          throw new CheckFailure({
+            expected: `pnpm ${args.join(" ")} to exit 0 after eject --yes`,
+            actual: `${describeExit(result)}\n${tail(result.output)}`,
+            command: result.display,
+          });
+        }
+      }
+    },
+  },
+  {
+    // ADR-0017's Consequences: a second run reports nothing to do once only reported items
+    // remain. `--yes` leaves the recipe and the package folders for an interactive approval,
+    // which the rehearsal cannot give, so a second `--yes` may still list those, and only those.
+    id: "eject-second-run",
+    name: "A second eject --yes removes nothing and lists only what the first run left for an interactive approval",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, yes } = await flowEject(context);
+      assertExitZero(yes);
+      const report = await ejectPlan(context);
+      const second = await context.run(context.calavera.bin, ["eject", "--yes", "--json"], {
+        cwd: project,
+      });
+      assertExitZero(second);
+      const result = parseJson(second);
+      const expected = new Set(
+        (report.items ?? [])
+          .filter(
+            (/** @type {{ matchesRecords: boolean, keptRecord?: true }} */ item) =>
+              item.keptRecord || !item.matchesRecords,
+          )
+          .map((/** @type {{ path: string }} */ { path }) => path),
+      );
+      // nothing-to-do counts only when the first run left nothing: otherwise --yes removed items
+      // ADR-0017 Decision 5 says it must leave, and each one shows below as "not listed".
+      /** @type {Array<{ path: string, outcome: string }>} */
+      const items = result.items ?? [];
+      const problems = [
+        ...items
+          .filter(({ path, outcome }) => outcome !== "left" || !expected.has(path))
+          .map(({ path, outcome }) => `${path} (${outcome})`),
+        ...[...expected]
+          .filter((path) => !items.some((item) => item.path === path))
+          .map((path) => `${path} (not listed)`),
+      ];
+      if (problems.length > 0) {
+        throw new CheckFailure({
+          expected: `a second eject to have nothing to remove, and to list only what the first left: ${[...expected].join(", ") || "nothing"}`,
+          actual: `status ${result.status}:\n${problems.join("\n")}`,
+          command: second.display,
+        });
+      }
+    },
+  },
+];
+
 export const cliExperienceChecks = [
   ...launchers.map(newProjectCheck),
   ...flowChecks,
   ...commitChecks,
   versionNoticeCheck,
   ...driftChecks,
+  ...ejectChecks,
 ];

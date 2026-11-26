@@ -330,7 +330,33 @@ test("no package.json, managed ancestor", async () => {
   assert.deepEqual(await detectVitePlus(child), {
     status: "unknown",
     corroborating: [],
-    ancestor: { manifestPath: join(root, "package.json"), status: "managed" },
+    ancestor: {
+      manifestPath: join(root, "package.json"),
+      status: "managed",
+      declaringManifestPath: join(root, "package.json"),
+    },
+  });
+});
+
+// #1084: the nearest manifest decides nothing by itself; the walk records which manifest above it
+// declares vite-plus, because that is where vp install installs it.
+test("no package.json, nearest ancestor managed by a manifest further up", async () => {
+  await using fixture = await createTemporaryFixture("managed-further-up", {
+    "package.json": json(libraryManifest),
+    "packages/member/package.json": json(plainViteManifest),
+  });
+  const root = fixture.root;
+  const child = join(root, "packages", "member", "sub");
+  await mkdir(child, { recursive: true });
+
+  assert.deepEqual(await detectVitePlus(child), {
+    status: "unknown",
+    corroborating: [],
+    ancestor: {
+      manifestPath: join(root, "packages", "member", "package.json"),
+      status: "managed",
+      declaringManifestPath: join(root, "package.json"),
+    },
   });
 });
 

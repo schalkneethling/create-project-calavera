@@ -72,6 +72,21 @@ shape:
 }
 ```
 
+Cursor lists `type` as required for a local server, so `.cursor/mcp.json` adds
+`"type": "stdio"` to the entry:
+
+```json
+{
+  "mcpServers": {
+    "calavera": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+    }
+  }
+}
+```
+
 Codex uses TOML:
 
 ```toml
@@ -80,25 +95,35 @@ command = "npx"
 args = ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
 ```
 
-OpenCode stores local MCP servers under `mcp`:
+Calavera requires OpenCode 2, which stores local MCP servers under
+`mcp.servers` and connects each one unless it sets `"disabled": true`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "calavera": {
-      "type": "local",
-      "command": [
-        "npx",
-        "--package",
-        "create-project-calavera@<version>",
-        "create-project-calavera-mcp"
-      ],
-      "enabled": true
+    "servers": {
+      "calavera": {
+        "type": "local",
+        "command": [
+          "npx",
+          "--package",
+          "create-project-calavera@<version>",
+          "create-project-calavera-mcp"
+        ]
+      }
     }
   }
 }
 ```
+
+OpenCode's migration guide says not to point OpenCode 1.x at files in the
+`mcp.servers` layout. When `opencode.json` holds the `calavera` entry that an
+earlier Calavera release wrote directly under `mcp`, `--init` moves it to
+`mcp.servers`; an entry you edited stays as it is, and `--init` says how to move
+it yourself. When the `opencode` on your `PATH` reports a version older than 2,
+`--init` warns before it writes, but it writes the OpenCode 2 layout either way.
+To skip that check, set `CALAVERA_NO_OPENCODE_VERSION_CHECK` to `1` or `true`.
 
 Use the package manager declared by the target project's `package.json` when
 creating the MCP registration. The generated notes choose the matching command,
@@ -123,8 +148,8 @@ registration float to a later package release.
 
 After registration, restart or reload the agent session if the MCP host does not
 discover new tools dynamically. Before composing a recipe, confirm these
-Calavera MCP tools are exposed: `inspect_project`, `list_profiles`,
-`list_integrations`, `describe_integration`, `list_ai_artifacts`,
+Calavera MCP tools are exposed: `inspect_project`, `artifact_status`,
+`list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`,
 `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`,
 `recommend_baseline_target`, `compose_recipe`, `validate_recipe`,
 `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
@@ -179,6 +204,15 @@ and package metadata before retrying the apply.
 Files listed by `dry_run_apply` are Calavera-managed outputs. Agents should not
 hand-write or edit them; `apply_recipe` or `create-project-calavera apply`
 creates them after approval.
+Each entry of `result.autoInstalledArtifacts` names an artifact that apply
+locks before it applies the recipe. Its `filesAlreadyMatch` field is `true`
+when the files in the project already match the version apply locks, for
+example after a bootstrap installed the skill before the project had a lock.
+Apply then writes none of that artifact's files, and `changes` lists each of
+them with `type: "unchanged"`. Apply still locks the version, stores the
+package under `.calavera/packages/`, and records the artifact in
+`.calavera/state.json`. The
+`apply --dry-run --json` output carries the same field.
 
 If inspection finds likely conflicts, the agent should pause before applying
 changes and list each conflict as either a hard stop or a migration decision the
@@ -198,14 +232,30 @@ npm create project-calavera -- --new
 Vite+ owns every question and every file the scaffold writes. Calavera starts
 `vp create` with the terminal attached, so Vite+ asks its own questions
 (template, target directory, and the rest), and Calavera does not answer them.
-As of Vite+ 1.3.0, Vite+ does not ask for the project's package manager: it uses
-the package manager of the runner Calavera starts, unless `--package-manager` is
-forwarded after `--new`. When `--new` runs inside an existing project, Vite+
-uses the package manager it detects there unless `--package-manager` is
-forwarded. Inside a monorepo, Vite+ uses the package manager it detects for the
-monorepo even when `--package-manager` is forwarded. A `VP_PACKAGE_MANAGER`
-environment variable overrides all of these. Vite+ also installs the project's
-dependencies; that step needs network access and cannot be skipped.
+Vite+ uses the package manager of the runner Calavera starts, unless
+`--package-manager` is forwarded after `--new`. When `--new` runs inside an
+existing project, Vite+ uses the package manager it detects there unless
+`--package-manager` is forwarded. When that project's `package.json` has no
+`packageManager` or `devEngines.packageManager` field and its folder has no
+lockfile or package-manager configuration file that Vite+ reads (an `.npmrc`
+does not count), Vite+ detects none and uses the runner's package manager, as it
+does outside a project. Inside a
+monorepo, Vite+ uses the package manager it detects for the monorepo even when
+`--package-manager` is forwarded. A `VP_PACKAGE_MANAGER` environment variable
+overrides all of these. Vite+ asks for the package manager only when none of
+these decides it: no `VP_PACKAGE_MANAGER`, no forwarded `--package-manager`, no
+package manager detected, and no runner that Vite+ recognizes
+(`npm_config_user_agent` is unset, or the name before its first `/` is not
+`npm`, `pnpm`, `yarn`, or `bun`). The prompt preselects pnpm. When Vite+ does
+not ask, because `--no-interactive` is forwarded or, unless `--interactive` is
+forwarded, `CI` is set or stdin is not a terminal, it uses pnpm without asking.
+This order was checked against Vite+ 1.6.0 and 1.7.0. Under `--new`, Vite+
+recognizes the runner, because Calavera removes the inherited
+`npm_config_user_agent` and each of its runners then sets its own value, which
+names the runner's package manager. The exception is a
+`user-agent` setting in an `.npmrc` file, which the npm runner uses instead.
+Vite+ also installs the project's dependencies; that step needs network access
+and cannot be skipped.
 
 `--new` ends Calavera's own flags. Every token after it goes to `vp create`
 unchanged, including a `--` that introduces template options, so Calavera flags
@@ -238,10 +288,11 @@ Calavera runs `vp create` through the package manager given with
 `--package-manager` before `--new`. When none is given, it uses the package
 manager that started Calavera: when pnpm started Calavera, `vp create` runs
 through pnpm. Calavera reads that package manager's name from the
-`npm_config_user_agent` environment variable, as Vite+ does, and uses Yarn only
-at version 2 or later, because Yarn 1 has no `dlx` command. Calavera falls back
-to npm when the variable is unset or empty, names another program, names Yarn 1,
-or names a Yarn whose version it cannot read. The runners are
+`npm_config_user_agent` environment variable, as Vite+ does. Calavera requires
+Yarn 2 or later. Under Yarn 1, Calavera stops and names the commands to use
+instead. Calavera falls back to npm when the variable is unset or empty, names
+another program, or names a Yarn whose version it cannot read, and when a
+project's `.npmrc` makes it name Yarn 1 while npm started Calavera. The runners are
 `npm create vite-plus@latest --`, `pnpm dlx create-vite-plus@latest`,
 `yarn dlx create-vite-plus@latest` (Yarn 2 or later), and
 `bunx create-vite-plus@latest`. Each one runs `create-vite-plus`, the entry
@@ -258,8 +309,15 @@ with `npx --package`, `npm exec --package`, or `npx -c`. Passed on,
 `npm_config_package` makes npm look inside create-project-calavera for the
 command it should start, either `create-vite-plus` or the `create-vite` that
 Vite+ starts for the template, and `npm_config_call` makes
-`npm create vite-plus@latest` run Calavera's own command line again. Every other
-variable passes through unchanged.
+`npm create vite-plus@latest` run Calavera's own command line again. Calavera
+also removes `npm_config_user_agent`, because Vite+ reads it to choose the
+project's package manager, and `npm create` and `bunx` pass an inherited value
+on. The runner then sets its own value, so Vite+ follows the runner Calavera
+chose, also when Calavera falls back to npm, for example under an unrecognized
+launcher, and when
+`--package-manager npm` or `bun` before `--new` names another package manager
+than the one that started Calavera. Every other variable passes through
+unchanged.
 
 Calavera continues into the bootstrap only when `vp create` exits with code 0
 and Vite+ detection reports `managed` for the scaffolded directory. That
@@ -272,10 +330,11 @@ hold a partial scaffold that belongs to Vite+.
 After the bootstrap, Calavera prints a summary in labeled groups separated by
 blank lines. "Changes" lists each file the bootstrap wrote, updated, or skipped,
 once, including `.calavera/state.json`, Calavera's record of the files it
-manages. The Calavera skill, `.coderabbit.yaml`, and `.calavera/state.json` are
-not listed when they are already up to date. "Notes" says where installed skills live and what you still need to do by
-hand, such as merging `AGENTS.calavera.md` or setting up MCP from
-`.agents/calavera/mcp.md`. "Next steps" follows, and "Next prompt" comes last:
+manages. A file that is already up to date, such as the Calavera skill or
+`.coderabbit.yaml` on a second run, is listed as skipped; only
+`.calavera/state.json` is left out when it is already up to date. "Notes" says where installed skills live and what you still need to do by
+hand, such as merging the fallback guidance or setting up MCP from the setup
+notes, each of which "Changes" lists. "Next steps" follows, and "Next prompt" comes last:
 the agent prompt alone on one line between blank lines, so you can copy all of
 it into your agent as one message.
 
@@ -412,22 +471,25 @@ project inspection, Baseline lookup, recipe composition, and project-local
 apply tools:
 
 1. `inspect_project`
-2. `list_profiles`
-3. `list_integrations`
-4. `describe_integration`
-5. `list_ai_artifacts`
-6. `list_baseline_targets`
-7. `describe_baseline_target`
-8. `search_baseline_features`
-9. `recommend_baseline_target`
-10. `compose_recipe`
-11. `validate_recipe`
-12. `explain_recipe`
-13. `dry_run_apply`
-14. `apply_recipe`
+2. `artifact_status`
+3. `list_profiles`
+4. `list_integrations`
+5. `describe_integration`
+6. `list_ai_artifacts`
+7. `list_baseline_targets`
+8. `describe_baseline_target`
+9. `search_baseline_features`
+10. `recommend_baseline_target`
+11. `compose_recipe`
+12. `validate_recipe`
+13. `explain_recipe`
+14. `dry_run_apply`
+15. `apply_recipe`
 
-WebMCP exposes the browser-safe subset: Baseline lookup, recipe composition,
-and recipe download, but not project inspection or apply:
+WebMCP, which the Composer registers through
+`document.modelContext.registerTool`, exposes the browser-safe subset:
+Baseline lookup, recipe composition, and recipe download, but not project
+inspection or apply:
 
 1. `list_profiles`
 2. `list_integrations`

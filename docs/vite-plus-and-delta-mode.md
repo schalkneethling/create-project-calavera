@@ -14,14 +14,27 @@ project's own `package.json` or the nearest ancestor manifest that declares
 it, matched exactly as Vite+ matches it for its own self-check; see
 [ADR-0001](./adr/0001-vite-plus-detection-signal.md) for the full signal set,
 the corroborating signals, and the fixture table. Catalog metadata still
-describes the project shapes an integration suits, and `doctor` stays
-advisory:
+describes the project shapes an integration suits, and the Vite+ warnings
+`doctor` reports stay advisory, so they do not change its exit status:
 
 - Catalog metadata should describe framework-specific integrations, including
   whether an integration is useful for Vite, Vite+, React, Vue, Svelte, or another
   project shape.
 - `doctor` can surface advisory messages when a recipe and detected project files
-  appear mismatched.
+  appear mismatched. In a project Vite+ manages, it reads the same detection
+  function as `inspect_project` and warns about each JavaScript or TypeScript
+  toolchain integration the recipe still selects, such as `oxlint` or
+  `typescript`. Those integrations were removed from the catalog
+  (ADR-0002 to ADR-0006), so `apply` refuses the recipe until they are
+  removed. The warning names the integration and the matched detection signal,
+  and `doctor` still writes nothing.
+- `doctor` also warns, in any project and whatever the Vite+ status, about
+  two kinds of recipe value that `apply` refuses: an integration ID the catalog does
+  not hold, and a profile that ADR-0011 removed, such as `modern`. Outside a
+  project Vite+ manages, a removed toolchain integration is named with the
+  ADR that removed it and ADR-0009's advice to run `vp create` or
+  `vp migrate` first. Any other unknown ID is named by its position in
+  `integrations`, so `doctor` does not repeat text from the recipe.
 
 Generated package scripts should stay ordinary package-manager scripts. Calavera
 should not replace them with `vp` commands or assume that a Vite+ project wants a

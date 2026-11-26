@@ -1,0 +1,6 @@
+---
+"create-project-calavera": patch
+"@schalkneethling/calavera-artifact-core": patch
+---
+
+Calavera no longer follows a redirect that would move an artifact lookup or download to plain `http` on a host other than `localhost`, `127.0.0.1`, or `::1`. Before, a registry or tarball host on `https` could redirect to plain `http`, so anyone on the network could see which package was fetched and, for a lookup, replace the package document. A package document lookup that started on `https`, or passed through it, and any tarball download, now stops before the `http` request with the error code `EINSECUREREDIRECT`. The error names the package and the two protocols, and quotes no URL. A plain-`http` registry that your own user configuration or environment names may still redirect a lookup over plain `http`, but only to its own host (the same host and port) or to `localhost`, `127.0.0.1`, or `::1`; a redirect to another plain-`http` host now stops with the same code. Redirects between `https` hosts and between loopback `http` hosts still work, and proxy settings apply as before. `artifacts status --check-updates`, `artifacts doctor --check-updates`, and the read-only `artifact_status` MCP tool report a refused lookup for that artifact, with a reason and a remedy that name no URL, and check the other artifacts instead of stopping (#1207).

@@ -234,7 +234,7 @@ test("Given a Vite+ project whose vp fmt prints a banner, when artifacts install
         { config: "calavera.config.json", dryRun: true, artifactAction: "install" },
         registry,
       ),
-      /returned text for \.calavera\/state\.json that does not hold the values Calavera sent/,
+      /returned text for \.calavera\/state\.json that is not JSON/,
     );
     assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
   });
@@ -344,7 +344,8 @@ test("Given a Vite+ project inside a folder whose .editorconfig sets four-space 
   for (const args of [["--dry-run"], []]) {
     const clean = runClean(args);
     assert.notEqual(clean.status, 0, clean.stdout);
-    assert.match(clean.stderr, stop);
+    // With --json, the stop is a JSON result (#1227).
+    assert.match(JSON.parse(clean.stdout).issues[0].message, stop);
   }
   assert.deepEqual(
     await inDirectory(root, () => snapshotDirectory()),
@@ -414,4 +415,132 @@ test("editorConfigRemovalChange compares the settings Oxfmt uses with and withou
   await rm(join(parent.root, ".editorconfig"));
   await writeFile(join(project, ".editorconfig"), renderEditorConfig(CALAVERA_EDITORCONFIG));
   assert.equal(await editorConfigRemovalChange(project, STATE_PATH), undefined);
+});
+
+test("Given a Vite+ project whose vp fmt cannot format the state, when agent-init runs, then the dry run and agent-init both stop before writing anything", async () => {
+  await using project = await copyReleaseFixture("library");
+  // #986: the guidance and MCP notes still format, so the first step to fail is the state.
+  // agent-init used to copy the skill files before that step.
+  await writeVitePlusFormatter(project.root, { failFor: STATE_PATH });
+  const options = { json: true, assumeYes: true, mcpHarness: "claude-code" };
+  const stop =
+    /could not format \.calavera\/state\.json: it exited with code 2\. Calavera does not show vp fmt's output/;
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    await assert.rejects(agentBootstrap({ ...options, dryRun: true }), stop);
+    await assert.rejects(agentBootstrap(options), stop);
+    assert.deepEqual(await snapshotDirectory(), before, "agent-init wrote files before it stopped");
+  });
+});
+
+test("Given a Vite+ project, when agent-init runs as a dry run, then it lists the skill files and the state and writes nothing", async () => {
+  await using project = await copyReleaseFixture("library");
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    // #986: agent-init now plans the skill files in a dry run before it formats the state, so this
+    // guards that a dry run still only lists them, and the CodeRabbit config they bring.
+    const dryRun = await agentBootstrap({ json: true, dryRun: true, mcpHarness: "claude-code" });
+    const listed = dryRun.changes.map(({ path }) => path);
+    assert.ok(listed.includes(".agents/skills/calavera"), listed.join(", "));
+    assert.ok(listed.includes(".coderabbit.yaml"), listed.join(", "));
+    assert.ok(listed.includes(STATE_PATH), listed.join(", "));
+    assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
+  });
+});
+
+test("Given a Vite+ project whose recipe names a legacy artifact path, when artifacts migrate rewrites calavera.config.json, then vp fmt keeps it byte-for-byte", async () => {
+  await using project = await copyReleaseFixture("library");
+  // #987: written the way JSON.stringify writes it, with each array item on its own line. vp fmt
+  // puts the short integrations array on one line, which is the change the hook made.
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify({ ...recipe, ai: [{ type: "skill", src: "skills/project-goal" }] }, null, 2)}\n`,
+  );
+
+  const result = await inDirectory(project.root, () =>
+    runArtifactCommand({
+      config: "calavera.config.json",
+      dryRun: false,
+      artifactAction: "migrate",
+    }),
+  );
+  assert.equal(result.migrated, 1);
+
+  const { before, after } = await formatAsTheHookDoes(project.root, ["calavera.config.json"]);
+  assert.match(before[0], /"integrations": \["editorconfig", "knip"\]/);
+  assert.match(before[0], /"ai": \[\n\s+\{\n\s+"id": "skill-project-goal"\n/);
+  assert.equal(after[0], before[0], "vp fmt rewrote calavera.config.json");
+});
+
+test("Given a Vite+ project whose vp fmt cannot format calavera.config.json, when artifacts migrate runs, then the dry run and the migration both stop before writing anything", async () => {
+  await using project = await copyReleaseFixture("library");
+  await writeVitePlusFormatter(project.root, { failFor: "calavera.config.json" });
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify({ ...recipe, ai: [{ type: "skill", src: "skills/project-goal" }] }, null, 2)}\n`,
+  );
+  const stop =
+    /could not format calavera\.config\.json: it exited with code 2\. Calavera does not show vp fmt's output/;
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    for (const dryRun of [true, false]) {
+      await assert.rejects(
+        runArtifactCommand({ config: "calavera.config.json", dryRun, artifactAction: "migrate" }),
+        stop,
+      );
+    }
+    assert.deepEqual(
+      await snapshotDirectory(),
+      before,
+      "artifacts migrate wrote files before it stopped",
+    );
+  });
+});
+
+test("Given a Vite+ project whose recipe names a legacy artifact path, when artifacts migrate runs as a dry run, then it reports the migration and writes nothing", async () => {
+  await using project = await copyReleaseFixture("library");
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify({ ...recipe, ai: [{ type: "skill", src: "skills/project-goal" }] }, null, 2)}\n`,
+  );
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    const result = await runArtifactCommand({
+      config: "calavera.config.json",
+      dryRun: true,
+      artifactAction: "migrate",
+    });
+    assert.equal(result.migrated, 1);
+    assert.deepEqual(result.recipe.ai, [{ id: "skill-project-goal" }]);
+    assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
+  });
+});
+
+test("Given a recipe with no legacy artifact path, when artifacts migrate runs, then it neither loads the formatter nor rewrites calavera.config.json", async () => {
+  await using project = await copyReleaseFixture("library");
+  // #987: the migration formats only the recipe it rewrites, so a recipe in a shape vp fmt would
+  // change stays as the person left it when there is nothing to migrate.
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify({ ...recipe, ai: [{ id: "skill-project-goal" }] }, null, 2)}\n`,
+  );
+  const services = {
+    loadFormatter: async () => {
+      throw new Error("artifacts migrate loaded the formatter with nothing to migrate");
+    },
+  };
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    const result = await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: false, artifactAction: "migrate" },
+      services,
+    );
+    assert.equal(result.migrated, 0);
+    assert.deepEqual(await snapshotDirectory(), before, "artifacts migrate rewrote the recipe");
+  });
 });

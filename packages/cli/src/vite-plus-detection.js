@@ -1,8 +1,10 @@
 // @ts-check
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import { parse as parseYAML } from "yaml";
+
+import { isPathInside } from "./utils/fs.js";
 
 /**
  * @typedef {{
@@ -10,8 +12,12 @@ import { parse as parseYAML } from "yaml";
  *   signal?: "vite-plus-dependency",
  *   manifestPath?: string,
  *   corroborating: Array<"vite-plus-config-import" | "vite-plus-core-pin" | "vp-scripts">,
- *   ancestor?: { manifestPath: string, status: "managed" | "unmanaged" }
+ *   ancestor?: { manifestPath: string, status: "managed" | "unmanaged", declaringManifestPath?: string }
  * }} VitePlusDetection
+ *
+ * `ancestor.declaringManifestPath` is present when `ancestor.status` is "managed". It is the
+ * manifest that declares vite-plus, which is the nearest manifest itself or one further up, and
+ * the directory where vp install installs vite-plus (#1084).
  */
 
 /**
@@ -136,13 +142,13 @@ async function findDeclaringManifest(projectDirectory) {
 
 /**
  * Finds the nearest readable manifest strictly above the inspected directory,
- * and reports whether it, or anything above it, declares `vite-plus`. One
- * climb answers both questions: the first manifest yielded is the nearest one,
- * and the walk continues only to learn whether any level declares the
- * dependency.
+ * and reports whether it, or anything above it, declares `vite-plus`, and
+ * which manifest does. One climb answers all three questions: the first
+ * manifest yielded is the nearest one, and the walk continues only to find the
+ * manifest that declares the dependency.
  *
  * @param {string} projectDirectory
- * @returns {Promise<{ manifestPath: string, status: "managed" | "unmanaged" } | undefined>}
+ * @returns {Promise<VitePlusDetection["ancestor"]>}
  */
 async function findAncestorVerdict(projectDirectory) {
   const parent = dirname(projectDirectory);
@@ -157,7 +163,11 @@ async function findAncestorVerdict(projectDirectory) {
     nearestManifestPath ??= entry.manifestPath;
 
     if (declaresVitePlus(entry.manifest)) {
-      return { manifestPath: nearestManifestPath, status: "managed" };
+      return {
+        manifestPath: nearestManifestPath,
+        status: "managed",
+        declaringManifestPath: entry.manifestPath,
+      };
     }
   }
 
@@ -315,7 +325,7 @@ async function collectCorroborating(projectDirectory, { ownManifest, pin } = {})
 function formatManifestPath(projectDirectory, manifestPath) {
   const relativePath = relative(projectDirectory, manifestPath);
 
-  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+  if (!relativePath || !isPathInside(projectDirectory, manifestPath)) {
     return manifestPath;
   }
 
@@ -375,4 +385,47 @@ async function buildUnknownDetection(projectDirectory) {
   }
 
   return { status: "unknown", corroborating, ancestor };
+}
+
+/**
+ * Where vp install installs vite-plus for a directory that has no package.json of its own and
+ * follows the Vite+ verdict of the manifest above it (#961): the directory of the manifest that
+ * declares vite-plus, which the remedy for a missing vite-plus names (#1084). Nothing when the
+ * directory's own manifest decides, or when no manifest above it declares vite-plus.
+ *
+ * @param {VitePlusDetection} detection
+ */
+export function vitePlusInstallDirectory(detection) {
+  const declaringManifestPath =
+    detection.status === "unknown" ? detection.ancestor?.declaringManifestPath : undefined;
+  return declaringManifestPath && dirname(declaringManifestPath);
+}
+
+/**
+ * Whether apply delegates to Vite+, both for the development dependency
+ * install (ADR-0012) and for the checks the generated `quality` script runs
+ * (ADR-0013): the project is managed, or it has no manifest of its own and the
+ * nearest ancestor that decides is managed, as in a new workspace member of a
+ * Vite+ workspace. The second case keeps ADR-0001's `unknown` verdict for
+ * reporting, and only keeps the install away from the package manager on
+ * `PATH` (ADR-0012, Decision 1).
+ *
+ * @param {VitePlusDetection} detection
+ */
+export function delegatesToVitePlus(detection) {
+  return (
+    detection.status === "managed" ||
+    (detection.status === "unknown" && detection.ancestor?.status === "managed")
+  );
+}
+
+/**
+ * The Vite+ verdict the formatter for Calavera's generated files follows: "managed" whenever apply
+ * delegates to Vite+, so under create-here the parent's vp check accepts those files (#961), and
+ * the detected status otherwise. Apply and init both load their formatter with it (#1086).
+ *
+ * @param {VitePlusDetection} detection
+ */
+export function formatterVitePlusStatus(detection) {
+  return delegatesToVitePlus(detection) ? "managed" : detection.status;
 }

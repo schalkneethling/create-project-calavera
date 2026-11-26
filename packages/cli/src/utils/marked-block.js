@@ -6,6 +6,13 @@
 // same in each. Apply never touches a line outside a block.
 
 /**
+ * The clause that says why Calavera refuses a block it finds in the file but has no record of
+ * writing, completing "the Calavera block for <owner> …". The .gitignore planner and the
+ * .vite-hooks planner both use it, so that reason has one wording.
+ */
+export const UNRECORDED_BLOCK = "is already in the file, and Calavera has no record of writing it";
+
+/**
  * @param {string} owner The artifact or integration id the block belongs to.
  */
 export function markers(owner) {
@@ -32,10 +39,38 @@ export function markers(owner) {
  * @param {string} owner
  * @param {string} [command] The command the reason tells the person to run again once the
  *   markers are fixed.
- * @returns {FoundBlock | { reason: string }}
+ * @returns {FoundBlock | { reason: string, changedMarker?: true }}
  */
 export function findBlock(path, contents, owner, command = "apply") {
-  const { start, end } = markers(owner);
+  return findMarkedBlock(
+    path,
+    contents,
+    {
+      ...markers(owner),
+      names: [`calavera:${owner}:start`, `calavera:${owner}:end`],
+      label: `the Calavera block for ${owner}`,
+    },
+    command,
+  );
+}
+
+/**
+ * Finds the block between a start and an end marker, each a whole line, or explains why the
+ * markers cannot be trusted. `findBlock` uses it for the `#` markers, and `eject` for the HTML
+ * comments around the guidance section in `AGENTS.md` (ADR-0017, Decision 7).
+ *
+ * @param {string} path
+ * @param {string} contents
+ * @param {{ start: string, end: string, names: string[], label: string }} block `names` are the
+ *   parts of the markers that identify them, so a line that holds one but is not exactly a marker
+ *   counts as a changed marker. `label` names the block in a reason.
+ * @param {string} command The command the reason tells the person to run again once the markers
+ *   are fixed.
+ * @returns {FoundBlock | { reason: string, changedMarker?: true }} `changedMarker` marks the
+ *   reason that quotes a marker line the person changed, so a report that must not print file
+ *   text can word that case itself.
+ */
+export function findMarkedBlock(path, contents, { start, end, names, label }, command) {
   // Lines keep their own endings. A file with Windows line endings gets them on the lines
   // Calavera adds too, and every comparison ignores the carriage return.
   const cr = contents.includes("\r\n") ? "\r" : "";
@@ -50,12 +85,13 @@ export function findBlock(path, contents, owner, command = "apply") {
   // an indented block inside an `if`. Inserting a second block would defeat their change.
   const changedMarker = bare.find(
     (text) =>
-      (text.includes(`calavera:${owner}:start`) || text.includes(`calavera:${owner}:end`)) &&
+      names.some((name) => text.includes(name)) &&
       text.trimEnd() !== start &&
       text.trimEnd() !== end,
   );
   if (changedMarker !== undefined) {
     return {
+      changedMarker: true,
       reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run ${command} again.`,
     };
   }
@@ -76,7 +112,7 @@ export function findBlock(path, contents, owner, command = "apply") {
             : undefined;
   if (markerProblem !== undefined) {
     return {
-      reason: `${path}: the Calavera block for ${owner} ${markerProblem}, so Calavera cannot tell where its block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove both markers and the lines between them, and run ${command} again.`,
+      reason: `${path}: ${label} ${markerProblem}, so Calavera cannot tell where its block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove both markers and the lines between them, and run ${command} again.`,
     };
   }
 

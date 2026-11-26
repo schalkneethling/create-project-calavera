@@ -1,7 +1,9 @@
 // @ts-check
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 
 import { parse } from "editorconfig";
+
+import { isPathInside } from "./fs.js";
 
 // Calavera formats the files it generates with the project's own `vp fmt` before it writes any of
 // them (#669). Oxfmt reads some of its settings from the nearest `.editorconfig` at or above the
@@ -98,9 +100,9 @@ async function oxfmtSettingsFor(projectDirectory, path, { withoutProjectRootFile
     cache: {
       // A subfolder's .editorconfig counts as missing, because Oxfmt never reads it.
       get(configPath) {
-        const folder = relative(projectDirectory, dirname(configPath));
-        if (folder.startsWith("..") || isAbsolute(folder)) return undefined;
-        if (folder === "" && !withoutProjectRootFile) return undefined;
+        const folder = dirname(configPath);
+        if (!isPathInside(projectDirectory, folder)) return undefined;
+        if (relative(projectDirectory, folder) === "" && !withoutProjectRootFile) return undefined;
         return { root: false, notfound: true, name: configPath, config: [[null, {}, null]] };
       },
       set() {

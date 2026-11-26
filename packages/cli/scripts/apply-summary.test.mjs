@@ -11,9 +11,17 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
-import { applySummaryLines } from "../src/apply-summary.js";
+import { applySummaryLines, ignoreChangeLine } from "../src/apply-summary.js";
 import { applyRecipeObject } from "../src/index.js";
+import {
+  initApplyDryRunLines,
+  initDefaultInputLines,
+  initRecipeSummary,
+  initSummaryLines,
+} from "../src/init-summary.js";
 import { buildRecipe } from "../src/recipe.js";
+import { info } from "../src/summary-lines.js";
+import { VARLOCK_POINTER } from "../src/varlock.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { copyReleaseFixture, writeVitePlusStub } from "./vite-plus-fixtures.mjs";
 
@@ -105,6 +113,9 @@ const guardGroup = (/** @type {string} */ argument, /** @type {string} */ matche
 
 const dispatcherWarning =
   "The Vite+ hook dispatcher is not installed in this clone, so Git runs none of the scripts in .vite-hooks, and the hooks skill-protected-branch-guard wires there will not run. Run vp config to install it.";
+// The summary names the hooks by the blocks it lists above, not by the artifact ID again (#1128).
+const dispatcherSummary =
+  "The Vite+ hook dispatcher is not installed in this clone, so Git runs none of the scripts in .vite-hooks, and the .vite-hooks blocks listed above will not run. Run vp config to install it.";
 
 const notes = [
   "Notes:",
@@ -165,12 +176,13 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         `    Would write its block in .vite-hooks/pre-commit: ${guardBlock("commit")}`,
         `    Would write its block in .vite-hooks/prepare-commit-msg: ${guardBlock("commit")}`,
         `    Would write its block in .vite-hooks/pre-push: ${guardBlock("pre-push")}`,
-        `    Would add a SessionStart group to .claude/settings.json: ${guardGroup("session-start")}`,
-        `    Would add a PreToolUse group to .claude/settings.json: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         "  Would lock hook-block-dangerous-commands 0.4.0 and write:",
         "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
         "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
-        `  ${dispatcherWarning}`,
+        "  Would write .claude/settings.json",
+        `    Would add a SessionStart group for skill-protected-branch-guard: ${guardGroup("session-start")}`,
+        `    Would add a PreToolUse group for skill-protected-branch-guard: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
+        `  ${dispatcherSummary}`,
         "",
         ...notes,
       ]);
@@ -223,12 +235,13 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         `    Wrote its block in .vite-hooks/pre-commit: ${guardBlock("commit")}`,
         `    Wrote its block in .vite-hooks/prepare-commit-msg: ${guardBlock("commit")}`,
         `    Wrote its block in .vite-hooks/pre-push: ${guardBlock("pre-push")}`,
-        `    Added a SessionStart group to .claude/settings.json: ${guardGroup("session-start")}`,
-        `    Added a PreToolUse group to .claude/settings.json: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         "  Locked hook-block-dangerous-commands 0.4.0 and wrote:",
         "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
         "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
-        `  ${dispatcherWarning}`,
+        "  Wrote .claude/settings.json",
+        `    Added a SessionStart group for skill-protected-branch-guard: ${guardGroup("session-start")}`,
+        `    Added a PreToolUse group for skill-protected-branch-guard: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
+        `  ${dispatcherSummary}`,
         "",
         ...notes,
       ]);
@@ -274,6 +287,7 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
           "  Unchanged docs/repository-controls.md",
           "  Unchanged .gitignore",
           '    Already holds the artifact-cache block: ".calavera/cache/"',
+          "  Unchanged .coderabbit.yaml",
           "",
         ]);
         assert.deepEqual(lines.slice(lines.indexOf("Scripts:"), lines.indexOf("Scripts:") + 3), [
@@ -281,16 +295,20 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
           "  Scripts already set: lint:styles, lint:styles:fix, knip, repo:controls:check, repo:controls:apply, quality",
           "",
         ]);
-        // A locked artifact whose files match gets no line of its own; its wiring still does.
+        // #956: an artifact whose files already match is named once, with its destination.
         assert.deepEqual(lines.slice(lines.indexOf("Artifacts:"), lines.indexOf("Notes:")), [
           "Artifacts:",
-          "  skill-protected-branch-guard",
+          "  Unchanged skill-protected-branch-guard at .agents/skills/protected-branch-guard",
           "    protectedBranch = main (recorded in the recipe)",
           `    .vite-hooks/pre-commit already holds its block: ${guardBlock("commit")}`,
           `    .vite-hooks/prepare-commit-msg already holds its block: ${guardBlock("commit")}`,
           `    .vite-hooks/pre-push already holds its block: ${guardBlock("pre-push")}`,
-          "    .claude/settings.json already holds its hook groups",
-          `  ${dispatcherWarning}`,
+          "  Unchanged hook-block-dangerous-commands:",
+          "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
+          "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+          "  Unchanged .claude/settings.json",
+          "    Already holds the hook groups for skill-protected-branch-guard",
+          `  ${dispatcherSummary}`,
           "",
         ]);
       },
@@ -309,16 +327,18 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         const lines = summary(relock, root);
         assert.ok(
           lines.includes(
-            "  Would lock skill-protected-branch-guard 1.0.0; its files in the project already match",
+            "  Would lock skill-protected-branch-guard 1.0.0; its files in the project already match: .agents/skills/protected-branch-guard",
           ),
           printed(lines),
         );
-        assert.ok(
-          lines.includes(
-            "  Would lock hook-block-dangerous-commands 0.4.0; its files in the project already match",
-          ),
-          printed(lines),
+        const hook = lines.indexOf(
+          "  Would lock hook-block-dangerous-commands 0.4.0; its files in the project already match:",
         );
+        assert.notEqual(hook, -1, printed(lines));
+        assert.deepEqual(lines.slice(hook + 1, hook + 3), [
+          "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
+          "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+        ]);
         assert.ok(!lines.includes("Nothing to change: the project already matches this recipe."));
       },
     );
@@ -386,6 +406,130 @@ test("the output of the recipe the #918 rehearsal applies passes its listing che
   });
 });
 
+test("a Varlock recipe names .env.schema and .gitignore once, under Files, in the dry run and after apply (#1023)", async () => {
+  await inManagedProject(async () => {
+    const recipe = buildRecipe("minimal", ["editorconfig", "varlock"], "pnpm");
+    const text = (/** @type {import("../src/index.js").ApplyResult} */ result) =>
+      printed(applySummaryLines(result).map((line) => line.text));
+    // The note keeps what the person has to do, and points at the files Files lists.
+    const note =
+      "  Review the Varlock schema and the ignore file listed under Files, including its existing rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
+
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true });
+    const planned = namedItems(JSON.parse(JSON.stringify(dryRun)));
+    assert.ok(planned.includes(".env.schema") && planned.includes(".gitignore"), planned.join());
+    const dryRunText = text(dryRun);
+    assert.deepEqual(listingViolations(dryRunText, planned, dryRun.vitePlus.lines), [], dryRunText);
+    assert.ok(dryRunText.includes(`\nNotes:\n${note}\n`), dryRunText);
+    // --json and MCP callers keep the note as it was, file names included.
+    assert.ok(dryRun.pointers.some((pointer) => pointer.startsWith("Review .env.schema and")));
+
+    const applied = await applyRecipeObject(dryRun.recipe, { ...applyOptions, noInstall: true });
+    const appliedText = text(applied);
+    assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
+    assert.ok(appliedText.includes(`\nNotes:\n${note}\n`), appliedText);
+
+    // A second dry run lists neither file under Files, so the note names each of them once.
+    const second = await applyRecipeObject(dryRun.recipe, { ...applyOptions, dryRun: true });
+    const secondText = text(second);
+    assert.doesNotMatch(secondText, /listed under Files/);
+    assert.deepEqual(
+      listingViolations(secondText, [".env.schema", ".gitignore"], second.vitePlus.lines),
+      [],
+      secondText,
+    );
+  });
+});
+
+test("the Varlock note names a file the project already has, which Files does not list (#1023)", async () => {
+  await inManagedProject(async () => {
+    await writeFile(".env.schema", "# @defaultRequired=false\n");
+    const recipe = buildRecipe("minimal", ["editorconfig", "varlock"], "pnpm");
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true });
+    const output = printed(applySummaryLines(dryRun).map((line) => line.text));
+
+    assert.match(
+      output,
+      /\nNotes:\n {2}Review \.env\.schema and the ignore file listed under Files, including its existing rules\./,
+    );
+    assert.deepEqual(
+      listingViolations(output, [".env.schema", ".gitignore"], dryRun.vitePlus.lines),
+      [],
+      output,
+    );
+  });
+});
+
+test("apply --dry-run, apply, and init --apply name each file, package, and artifact once for a recipe with Knip and the guard (#1128)", async () => {
+  await inManagedProject(async () => {
+    // Knip adds a script also named knip, and the guard adds two hook groups to
+    // .claude/settings.json. On the branch the guard protects, apply also warns about the branch.
+    execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    const recipe = {
+      ...buildRecipe(
+        "default",
+        ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline", "knip"],
+        "pnpm",
+      ),
+      ai: [{ id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } }],
+    };
+    const registry = stubRegistry(richReleases);
+    const text = (/** @type {import("../src/summary-lines.js").SummaryLine[]} */ lines) =>
+      printed(lines.map((line) => line.text));
+    const config = "calavera.config.json";
+
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    const planned = namedItems(JSON.parse(JSON.stringify(dryRun)));
+    for (const item of [".claude/settings.json", "knip", "skill-protected-branch-guard"]) {
+      assert.ok(planned.includes(item), `${item} in ${planned.join()}`);
+    }
+    // --json and MCP callers keep the warnings as they were, the artifact ID included.
+    assert.deepEqual(dryRun.wiringWarnings, [
+      dispatcherWarning,
+      "You are on main, the branch skill-protected-branch-guard protects (protectedBranch), so the guard will refuse to commit the applied files here. Create a feature branch first, for example with git switch -c <name>, and commit there.",
+    ]);
+    const dryRunText = text(applySummaryLines(dryRun));
+    assert.deepEqual(listingViolations(dryRunText, planned, dryRun.vitePlus.lines), [], dryRunText);
+    assert.ok(
+      dryRunText.includes(
+        [
+          "  Would write .claude/settings.json",
+          `    Would add a SessionStart group for skill-protected-branch-guard: ${guardGroup("session-start")}`,
+          `    Would add a PreToolUse group for skill-protected-branch-guard: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
+          `  ${dispatcherSummary}`,
+          "  You are on main, the protectedBranch listed above, so the guard will refuse to commit the applied files here. Create a feature branch first, for example with git switch -c <name>, and commit there.",
+        ].join("\n"),
+      ),
+      dryRunText,
+    );
+
+    const applied = await applyRecipeObject(
+      dryRun.recipe,
+      { ...applyOptions, approvedArtifacts: dryRun.autoInstalledArtifacts },
+      registry,
+    );
+    const appliedText = text(applySummaryLines(applied));
+    assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
+
+    // init --apply prints the recipe summary, the defaults it recorded, the apply dry run under
+    // its own headline, and the closing lines (src/index.js, runInit), around the same body.
+    const initText = text([
+      info(initRecipeSummary(dryRun.recipe, { dependencies: [], aiArtifacts: [] }, true)),
+      ...initDefaultInputLines(dryRun.artifactInputs, dryRun.integrationInputs, config, true),
+      ...initApplyDryRunLines(dryRun, { config, dryRun: false, noInstall: false }),
+      ...initSummaryLines({
+        command: "init",
+        config,
+        dryRun: false,
+        recipe: dryRun.recipe,
+        applyDryRun: dryRun,
+        applyResult: applied,
+      }),
+    ]);
+    assert.deepEqual(listingViolations(initText, planned, dryRun.vitePlus.lines), [], initText);
+  });
+});
+
 test("every line the dry run prints for the rich recipe fits in 100 columns, except fixed text and quoted values", async () => {
   await inManagedProject(async (root) => {
     const dryRun = await applyRecipeObject(
@@ -399,7 +543,7 @@ test("every line the dry run prints for the rich recipe fits in 100 columns, exc
       ...dryRun.vitePlus.lines,
       // The summary prints the cache pointer without the ignore file it names under Files.
       ...dryRun.pointers.map((pointer) => pointer.replace(" in .gitignore,", ",")),
-      ...dryRun.wiringWarnings,
+      dispatcherSummary,
     ]);
     const long = summary(dryRun, root).filter(
       (line) =>
@@ -447,6 +591,8 @@ function emptyResult(overrides) {
     wiringChanges: [],
     wiringWarnings: [],
     ignoreChanges: [],
+    stagingLeftovers: [],
+    temporaryFolderLeftovers: [],
     recipe: { version: 1, integrations: [] },
     ...overrides,
   };
@@ -456,6 +602,43 @@ function emptyResult(overrides) {
 function levels(lines) {
   return lines.map(({ level, text }) => `${level} ${text}`);
 }
+
+test("the Varlock note points to Files only for the files Files lists (#1023)", () => {
+  const recommendation =
+    "Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
+  const note = (/** @type {import("../src/index.js").Change[]} */ changes, ignoreChanges = []) =>
+    applySummaryLines(emptyResult({ changes, ignoreChanges, pointers: [VARLOCK_POINTER] }))
+      .map(({ text }) => text)
+      .at(-1);
+  const schema = { type: "write", path: ".env.schema", action: "scaffold", ownership: "project" };
+  const ignore = { type: "update", path: ".gitignore" };
+
+  assert.equal(
+    note([schema, ignore]),
+    `  Review the Varlock schema and the ignore file listed under Files, including its existing rules. ${recommendation}`,
+  );
+  assert.equal(
+    note([schema]),
+    `  Review the Varlock schema listed under Files and existing .gitignore rules. ${recommendation}`,
+  );
+  assert.equal(
+    note([ignore]),
+    `  Review .env.schema and the ignore file listed under Files, including its existing rules. ${recommendation}`,
+  );
+  // An ignore file named only for the lines apply plans in it still counts as listed.
+  assert.equal(
+    note(
+      [],
+      /** @type {import("../src/ignore-lines.js").IgnoreChange[]} */ ([
+        { path: ".gitignore", integration: "varlock", type: "unchanged", lines: [] },
+      ]),
+    ),
+    `  Review .env.schema and the ignore file listed under Files, including its existing rules. ${recommendation}`,
+  );
+  assert.equal(note([]), `  ${VARLOCK_POINTER}`);
+  // A change the Files group prints no line for does not count as listed.
+  assert.equal(note([{ ...schema, type: "skip" }]), `  ${VARLOCK_POINTER}`);
+});
 
 test("each kind of file, script, and finding has one line, in both tenses", () => {
   const changes = [
@@ -592,40 +775,48 @@ test("nothing to change is said only when every change is unchanged and nothing 
   assert.equal(
     texts({
       changes: [{ type: "unchanged", path: "a" }],
-      autoInstalledArtifacts: [/** @type {any} */ ({ id: "skill-project-goal", version: "0.1.0" })],
+      autoInstalledArtifacts: [
+        /** @type {any} */ ({
+          id: "skill-project-goal",
+          version: "0.1.0",
+          filesAlreadyMatch: false,
+        }),
+      ],
       recipe: { version: 1, integrations: [], ai: [{ id: "skill-project-goal" }] },
     }).includes(nothing),
     false,
   );
 });
 
+/** One change of each kind apply plans for an ignore file. */
+const IGNORE_CHANGES = [
+  {
+    path: ".gitignore",
+    integration: "stryker",
+    type: "update",
+    lines: ["b/"],
+    previousLines: ["a/"],
+  },
+  { path: ".gitignore", integration: "stryker", type: "unchanged", lines: ["c/"] },
+  { path: ".gitignore", integration: "stryker", type: "update", removedLines: ["d/"] },
+  {
+    path: ".gitignore",
+    integration: "artifact-cache",
+    type: "update",
+    removedLines: [".calavera/cache/"],
+  },
+  { path: ".htmlvalidateignore", type: "update", removedLines: ["e/"] },
+  { path: ".htmlvalidateignore", integration: "html-validate", type: "update", lines: ["f/"] },
+  { path: ".other-ignore", integration: "stryker", type: "write", lines: ["g/", "h/"] },
+];
+
 test("each ignore file is named once, with each owner's lines under it", () => {
-  const ignoreChanges = [
-    {
-      path: ".gitignore",
-      integration: "stryker",
-      type: "update",
-      lines: ["b/"],
-      previousLines: ["a/"],
-    },
-    { path: ".gitignore", integration: "stryker", type: "unchanged", lines: ["c/"] },
-    { path: ".gitignore", integration: "stryker", type: "update", removedLines: ["d/"] },
-    {
-      path: ".gitignore",
-      integration: "artifact-cache",
-      type: "update",
-      removedLines: [".calavera/cache/"],
-    },
-    { path: ".htmlvalidateignore", type: "update", removedLines: ["e/"] },
-    { path: ".htmlvalidateignore", integration: "html-validate", type: "update", lines: ["f/"] },
-    { path: ".other-ignore", integration: "stryker", type: "write", lines: ["g/"] },
-  ];
   const result = emptyResult({
     changes: [
       { type: "update", path: ".gitignore", action: "merge", ownership: "project" },
       { type: "write", path: ".htmlvalidateignore", action: "write", ownership: "calavera" },
     ],
-    ignoreChanges: /** @type {any} */ (ignoreChanges),
+    ignoreChanges: /** @type {any} */ (IGNORE_CHANGES),
   });
 
   const expected = (/** @type {boolean} */ dryRun) => {
@@ -642,7 +833,7 @@ test("each ignore file is named once, with each owner's lines under it", () => {
       `    ${verb("Would remove", "Removed")} lines no selected integration declares: "e/"`,
       `    ${verb("Would add", "Added")} the html-validate lines: "f/"`,
       "  .other-ignore",
-      `    ${verb("Would add", "Added")} the stryker lines: "g/"`,
+      `    ${verb("Would add", "Added")} the stryker lines: "g/", "h/"`,
     ];
   };
   const files = (/** @type {import("../src/index.js").ApplyResult} */ value) => {
@@ -652,6 +843,25 @@ test("each ignore file is named once, with each owner's lines under it", () => {
 
   assert.deepEqual(files(result), expected(true));
   assert.deepEqual(files({ ...result, dryRun: false }), expected(false));
+});
+
+// #1135: the artifacts dry run prints its .gitignore lines without a file line above them, so it
+// names the path in each line, and otherwise uses apply's words for the same change.
+test("the artifacts dry run words each ignore change as apply does, with the path named", () => {
+  assert.deepEqual(
+    IGNORE_CHANGES.map((change) =>
+      ignoreChangeLine(/** @type {any} */ (change), true, { namePath: true }),
+    ),
+    [
+      'Would replace the stryker block in .gitignore: "a/" with "b/"',
+      '.gitignore already holds the stryker block: "c/"',
+      'Would remove the stryker block from .gitignore, because stryker no longer adds lines to it: "d/"',
+      'Would remove the artifact-cache block from .gitignore, because the recipe selects no artifacts and .calavera/cache/ does not exist: ".calavera/cache/"',
+      'Would remove lines no selected integration declares from .htmlvalidateignore: "e/"',
+      'Would add the html-validate lines to .htmlvalidateignore: "f/"',
+      'Would add the stryker lines to .other-ignore: "g/", "h/"',
+    ],
+  );
 });
 
 test("integrations name their packages once and say how the install ran", () => {
@@ -705,6 +915,15 @@ test("integrations name their packages once and say how the install ran", () => 
     ...named,
     "  Not installed, because apply ran with --no-install.",
   ]);
+  // #1022: a real apply with --no-install gives the command to run later, as its dry run does.
+  assert.deepEqual(
+    integrations({ ...base, dryRun: false, laterInstallCommand: "npm install --save-dev knip" }),
+    [
+      ...named,
+      "  Not installed, because apply ran with --no-install.",
+      "  Install them later with: npm install --save-dev knip",
+    ],
+  );
   assert.deepEqual(
     integrations({
       ...base,
@@ -717,6 +936,17 @@ test("integrations name their packages once and say how the install ran", () => 
     integrations({ ...base, dryRun: false, installCommand: "npm install --save-dev knip" }),
     [...named, "  Installed with: npm install --save-dev knip"],
   );
+  // #1022: a dry run with --no-install says what the apply will print, and gives the command to
+  // run later. The notes about how apply runs the install do not apply, so they are left out.
+  const noInstall = applySummaryLines(
+    { ...base, installCommand: "npm install --save-dev knip", installNotes: ["A note."] },
+    { noInstall: true },
+  ).map(({ text }) => text);
+  assert.deepEqual(noInstall.slice(noInstall.indexOf("Integrations:")), [
+    ...named,
+    "  Not installed, because apply runs with --no-install.",
+    "  Install them later with: npm install --save-dev knip",
+  ]);
   // Without packages, no install line.
   assert.deepEqual(
     applySummaryLines(emptyResult({ recipe: { version: 1, integrations: ["editorconfig"] } })).map(
@@ -732,6 +962,133 @@ test("integrations name their packages once and say how the install ran", () => 
       "  editorconfig",
     ],
   );
+});
+
+test("apply --dry-run, apply, and init --apply name .claude/settings.json once when two artifacts change it, with every artifact's groups under the one file line (#1145)", async () => {
+  await inManagedProject(async () => {
+    // Only the guard declares Claude Code groups today, so the second artifact is one the recipe
+    // no longer selects: its recorded Stop group is in the settings file, and apply removes it
+    // while the guard replaces its own groups for a new protected branch.
+    execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/1145-settings-once"]);
+    const guard = (/** @type {string} */ protectedBranch) => ({
+      ...buildRecipe("default", ["editorconfig"], "pnpm"),
+      ai: [{ id: "skill-protected-branch-guard", inputs: { protectedBranch } }],
+    });
+    const registry = stubRegistry(richReleases);
+    const text = (/** @type {import("../src/summary-lines.js").SummaryLine[]} */ lines) =>
+      printed(lines.map((line) => line.text));
+    const first = await applyRecipeObject(
+      guard("main"),
+      { ...applyOptions, dryRun: true },
+      registry,
+    );
+    await applyRecipeObject(
+      first.recipe,
+      { ...applyOptions, approvedArtifacts: first.autoInstalledArtifacts },
+      registry,
+    );
+
+    const retiredGroup = {
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.agents/skills/retired-guard/scripts/stop.mjs"',
+          timeout: 10,
+        },
+      ],
+    };
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    state.aiArtifacts.push({
+      type: "skill",
+      name: "retired-guard",
+      source: "skill-retired-guard",
+      path: ".agents/skills/retired-guard",
+      hash: "0000000",
+    });
+    state.aiWiring.push({ artifact: "skill-retired-guard", claudeCode: { Stop: [retiredGroup] } });
+    await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+    const settings = JSON.parse(await readFile(".claude/settings.json", "utf8"));
+    settings.hooks.Stop = [retiredGroup];
+    await writeFile(".claude/settings.json", `${JSON.stringify(settings, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(
+      guard("develop"),
+      { ...applyOptions, dryRun: true },
+      registry,
+    );
+    // --json and MCP callers keep one change per artifact.
+    assert.deepEqual(
+      dryRun.wiringChanges
+        .filter(({ path }) => path === ".claude/settings.json")
+        .map(({ artifact, type }) => [artifact, type]),
+      [
+        ["skill-protected-branch-guard", "update"],
+        ["skill-retired-guard", "update"],
+      ],
+    );
+    // namedItems takes artifact IDs from the lock entries, and neither artifact locks anything
+    // here, so the IDs the wiring changes name are checked as well.
+    const planned = [
+      ...namedItems(JSON.parse(JSON.stringify(dryRun))),
+      ...new Set(dryRun.wiringChanges.map(({ artifact }) => artifact)),
+    ];
+    assert.ok(planned.includes(".claude/settings.json"), planned.join());
+    const dryRunText = text(applySummaryLines(dryRun));
+    assert.deepEqual(listingViolations(dryRunText, planned, dryRun.vitePlus.lines), [], dryRunText);
+    // One file line under Artifacts, after the artifacts, with each group line naming its
+    // artifact, as the clean summary prints a wiring file (owner decision on #1145).
+    const guardId = "skill-protected-branch-guard";
+    const develop = (/** @type {string} */ group) => group.replace(" main", " develop");
+    const settingsBlock = (/** @type {boolean} */ planned) => {
+      const [replace, remove, update] = planned
+        ? ["Would replace", "Would remove", "Would update"]
+        : ["Replaced", "Removed", "Updated"];
+      const preToolUse = guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit");
+      return [
+        `  ${update} .claude/settings.json`,
+        `    ${replace} the SessionStart group for ${guardId}: ${guardGroup("session-start")} with ${develop(guardGroup("session-start"))}`,
+        `    ${replace} the PreToolUse group for ${guardId}: ${preToolUse} with ${develop(preToolUse)}`,
+        `    ${remove} the Stop group for skill-retired-guard, because the recipe no longer selects skill-retired-guard: ${JSON.stringify(retiredGroup)}`,
+      ].join("\n");
+    };
+    const settingsMentions = (/** @type {string} */ output) =>
+      output.split(".claude/settings.json").length - 1;
+    assert.ok(dryRunText.includes(settingsBlock(true)), dryRunText);
+    assert.equal(settingsMentions(dryRunText), 1, dryRunText);
+
+    const applied = await applyRecipeObject(
+      dryRun.recipe,
+      { ...applyOptions, approvedArtifacts: dryRun.autoInstalledArtifacts },
+      registry,
+    );
+    const appliedText = text(applySummaryLines(applied));
+    assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
+    assert.ok(appliedText.includes(settingsBlock(false)), appliedText);
+    assert.equal(settingsMentions(appliedText), 1, appliedText);
+    assert.equal(
+      Object.hasOwn(JSON.parse(await readFile(".claude/settings.json", "utf8")).hooks, "Stop"),
+      false,
+    );
+
+    // init --apply prints the same body under its own headline (src/index.js, runInit).
+    const config = "calavera.config.json";
+    const initText = text([
+      info(initRecipeSummary(dryRun.recipe, { dependencies: [], aiArtifacts: [] }, true)),
+      ...initDefaultInputLines(dryRun.artifactInputs, dryRun.integrationInputs, config, true),
+      ...initApplyDryRunLines(dryRun, { config, dryRun: false, noInstall: false }),
+      ...initSummaryLines({
+        command: "init",
+        config,
+        dryRun: false,
+        recipe: dryRun.recipe,
+        applyDryRun: dryRun,
+        applyResult: applied,
+      }),
+    ]);
+    assert.deepEqual(listingViolations(initText, planned, dryRun.vitePlus.lines), [], initText);
+    assert.ok(initText.includes(settingsBlock(true)), initText);
+    assert.equal(settingsMentions(initText), 1, initText);
+  });
 });
 
 test("each artifact is one line, with its outputs, inputs, and wiring under it", () => {
@@ -788,7 +1145,7 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
       removedBlock: "run c",
     },
     {
-      artifact: "skill-code-review",
+      artifact: "hook-block-dangerous-commands",
       path: ".claude/settings.json",
       kind: "claude-settings",
       type: "unchanged",
@@ -824,7 +1181,9 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
   const result = emptyResult({
     recipe,
     changes: /** @type {any} */ (changes),
-    autoInstalledArtifacts: /** @type {any} */ ([{ id: "skill-css-tokens", version: "0.3.0" }]),
+    autoInstalledArtifacts: /** @type {any} */ ([
+      { id: "skill-css-tokens", version: "0.3.0", filesAlreadyMatch: true },
+    ]),
     artifactRegistries: [{ origin: "https://registry.example", source: "project .npmrc" }],
     artifactWarnings: ["An npm setting was ignored."],
     artifactInputs: /** @type {any} */ ([
@@ -857,14 +1216,17 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
     'info     .vite-hooks/pre-commit already holds its block: "run a"',
     'info     Would update its block in .vite-hooks/pre-push: "run b"',
     'info     Would remove its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
-    "info     .claude/settings.json already holds its hook groups",
-    'info     Would replace the SessionStart group in .claude/settings.json: {"a":0} with {"a":1}',
-    'info     Would remove the PreToolUse group from .claude/settings.json: {"b":0}',
-    "info     Would also change the layout of the rest of .claude/settings.json, because Calavera writes the whole file in the project's format; no value outside the groups changes",
     "info   Would lock skill-css-tokens 0.3.0; its files in the project already match",
     "info   skill-dropped, which the recipe no longer selects",
     'info     Would remove its block from .vite-hooks/pre-commit, because the recipe no longer selects it: "run d"',
-    'info     Would remove the Stop group from .claude/settings.json, because the recipe no longer selects it: {"c":0}',
+    // #1145: the settings file is one line after the artifacts, with each artifact's groups under
+    // it, and the layout note once, after the groups.
+    "info   Would update .claude/settings.json",
+    "info     Already holds the hook groups for hook-block-dangerous-commands",
+    'info     Would replace the SessionStart group for skill-code-review: {"a":0} with {"a":1}',
+    'info     Would remove the PreToolUse group for skill-code-review: {"b":0}',
+    'info     Would remove the Stop group for skill-dropped, because the recipe no longer selects skill-dropped: {"c":0}',
+    "info     Would also change the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
     "warn   An npm setting was ignored.",
     "warn   A wiring warning.",
   ]);
@@ -879,7 +1241,33 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
     ),
     true,
   );
-  // The wiring file sits under the artifact, not under Files.
+  // A settings file that no artifact changes is named as unchanged, with whose groups it holds.
+  const unchangedFile = levels(
+    applySummaryLines({ ...result, wiringChanges: /** @type {any} */ ([wiringChanges[3]]) }),
+  );
+  assert.deepEqual(unchangedFile.slice(-5, -2), [
+    "info   Would lock skill-css-tokens 0.3.0; its files in the project already match",
+    "info   Unchanged .claude/settings.json",
+    "info     Already holds the hook groups for hook-block-dangerous-commands",
+  ]);
+  // A file the first artifact writes is written, though a later artifact only updates it.
+  const written = levels(
+    applySummaryLines({
+      ...result,
+      dryRun: false,
+      wiringChanges: /** @type {any} */ ([
+        { ...wiringChanges[4], type: "write", reformatted: false },
+        wiringChanges[6],
+      ]),
+    }),
+  );
+  assert.deepEqual(written.slice(-6, -2), [
+    "info   Wrote .claude/settings.json",
+    'info     Replaced the SessionStart group for skill-code-review: {"a":0} with {"a":1}',
+    'info     Removed the PreToolUse group for skill-code-review: {"b":0}',
+    'info     Removed the Stop group for skill-dropped, because the recipe no longer selects skill-dropped: {"c":0}',
+  ]);
+  // The wiring file sits under Artifacts, not under Files.
   const lines = applySummaryLines(result).map(({ text }) => text);
   assert.equal(lines.includes("Files:"), false);
   // An artifact with nothing to report has no line, and no group appears without one.
@@ -891,6 +1279,63 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
       .includes("Artifacts:"),
     false,
   );
+});
+
+test("an artifact whose outputs already match is named once, with each output (#956)", () => {
+  const recipe = {
+    version: 1,
+    integrations: [],
+    ai: [
+      { id: "skill-project-goal" },
+      { id: "hook-block-dangerous-commands" },
+      { id: "skill-code-review" },
+    ],
+  };
+  const hookScript = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
+  const hookSettings = ".agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json";
+  const output = (/** @type {string} */ type, /** @type {string} */ path) => ({
+    type,
+    path,
+    category: "ai",
+  });
+  const result = emptyResult({
+    recipe,
+    changes: /** @type {any} */ ([
+      output("unchanged", ".agents/skills/project-goal"),
+      output("unchanged", hookScript),
+      output("unchanged", hookSettings),
+      output("unchanged", ".agents/skills/code-review"),
+    ]),
+    autoInstalledArtifacts: /** @type {any} */ ([
+      { id: "skill-code-review", version: "1.2.0", filesAlreadyMatch: true },
+    ]),
+  });
+  const artifacts = (/** @type {import("../src/index.js").ApplyResult} */ value) => {
+    const lines = applySummaryLines(value).map(({ text }) => text);
+    return lines.slice(lines.indexOf("Artifacts:") + 1);
+  };
+
+  assert.deepEqual(artifacts(result), [
+    "  Unchanged skill-project-goal at .agents/skills/project-goal",
+    "  Unchanged hook-block-dangerous-commands:",
+    `    ${hookScript}`,
+    `    ${hookSettings}`,
+    "  Would lock skill-code-review 1.2.0; its files in the project already match: .agents/skills/code-review",
+  ]);
+  assert.equal(
+    artifacts({ ...result, dryRun: false }).at(-1),
+    "  Locked skill-code-review 1.2.0; its files in the project already matched: .agents/skills/code-review",
+  );
+
+  // An output that matches beside one apply writes is named under the written one.
+  const mixed = emptyResult({
+    recipe: { version: 1, integrations: [], ai: [{ id: "hook-block-dangerous-commands" }] },
+    changes: /** @type {any} */ ([output("write", hookScript), output("unchanged", hookSettings)]),
+  });
+  assert.deepEqual(artifacts(mixed), [
+    `  Would write hook-block-dangerous-commands to ${hookScript}`,
+    `    Unchanged ${hookSettings}`,
+  ]);
 });
 
 test("a package manager given to apply that differs from the detected one stays visible", () => {
@@ -958,7 +1403,9 @@ test("the artifact group reads in the past tense after apply, and names the defa
       ai: [{ id: "skill-code-review" }, { id: "skill-css-tokens" }],
     },
     artifactRegistries: [{ origin: "https://registry.npmjs.org", source: "default" }],
-    autoInstalledArtifacts: /** @type {any} */ ([{ id: "skill-css-tokens", version: "0.3.0" }]),
+    autoInstalledArtifacts: /** @type {any} */ ([
+      { id: "skill-css-tokens", version: "0.3.0", filesAlreadyMatch: true },
+    ]),
     // An artifact with only an input still gets a line, with the input under it.
     artifactInputs: /** @type {any} */ ([
       {
@@ -1007,10 +1454,11 @@ test("the artifact group reads in the past tense after apply, and names the defa
     "  Locked skill-css-tokens 0.3.0; its files in the project already matched",
     '    Updated its block in .vite-hooks/pre-push: "run b"',
     '    Removed its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
-    '    Added a SessionStart group to .claude/settings.json: {"a":1}',
-    '    Replaced the Stop group in .claude/settings.json: {"a":0} with {"a":1}',
-    '    Removed the PreToolUse group from .claude/settings.json: {"b":0}',
-    "    Also changed the layout of the rest of .claude/settings.json, because Calavera writes the whole file in the project's format; no value outside the groups changes",
+    "  Updated .claude/settings.json",
+    '    Added a SessionStart group for skill-css-tokens: {"a":1}',
+    '    Replaced the Stop group for skill-css-tokens: {"a":0} with {"a":1}',
+    '    Removed the PreToolUse group for skill-css-tokens: {"b":0}',
+    "    Also changed the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
   ]);
 });
 
@@ -1099,6 +1547,8 @@ test("a legacy artifact entry is named by its catalog ID, with the version apply
       ),
       printed(texts(dryRun)),
     );
+    // #1021: the JSON result says the same as the summary line.
+    assert.equal(dryRun.autoInstalledArtifacts[0].filesAlreadyMatch, false);
 
     await applyRecipeObject(
       dryRun.recipe,
@@ -1110,14 +1560,15 @@ test("a legacy artifact entry is named by its catalog ID, with the version apply
     const relock = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
     assert.ok(
       texts(relock).includes(
-        "  Would lock skill-project-goal 0.1.0; its files in the project already match",
+        "  Would lock skill-project-goal 0.1.0; its files in the project already match: .agents/skills/project-goal",
       ),
       printed(texts(relock)),
     );
+    assert.equal(relock.autoInstalledArtifacts[0].filesAlreadyMatch, true);
   });
 });
 
-test("a legacy entry's wiring sits under it, not under an artifact the recipe no longer selects", () => {
+test("a legacy entry's wiring is named for it, not for an artifact the recipe no longer selects", () => {
   const lines = applySummaryLines(
     emptyResult({
       recipe: {
@@ -1138,6 +1589,35 @@ test("a legacy entry's wiring sits under it, not under an artifact the recipe no
   assert.deepEqual(lines.slice(lines.indexOf("Artifacts:")), [
     "Artifacts:",
     "  hook-block-dangerous-commands",
-    "    .claude/settings.json already holds its hook groups",
+    "  Unchanged .claude/settings.json",
+    "    Already holds the hook groups for hook-block-dangerous-commands",
   ]);
+});
+
+test("each entry of .calavera/.staging is one line under Files: a removal, or a warning that it is kept (#1034)", () => {
+  const stagingLeftovers = [
+    {
+      path: ".calavera/.staging/skill-project-goal",
+      action: /** @type {const} */ ("remove"),
+      package: "@schalkneethling/calavera-skill-project-goal@0.1.0",
+      reason: "R1.",
+    },
+    { path: ".calavera/.staging/notes.txt", action: /** @type {const} */ ("keep"), reason: "R2." },
+  ];
+
+  assert.deepEqual(levels(applySummaryLines(emptyResult({ stagingLeftovers }))).slice(-4), [
+    "info ",
+    "info Files:",
+    "info   Would remove .calavera/.staging/skill-project-goal: R1.",
+    "warn   Would keep .calavera/.staging/notes.txt: R2.",
+  ]);
+  assert.deepEqual(
+    levels(applySummaryLines(emptyResult({ dryRun: false, stagingLeftovers }))).slice(-4),
+    [
+      "info ",
+      "info Files:",
+      "info   Removed .calavera/.staging/skill-project-goal: R1.",
+      "warn   Kept .calavera/.staging/notes.txt: R2.",
+    ],
+  );
 });

@@ -309,8 +309,8 @@ test("Given a group the person edited, when the hooks are planned, then it is a 
 
 test("Given settings Calavera cannot read, when the hooks are planned, then it is a conflict and nothing is rewritten", async () => {
   for (const [contents, problem] of [
-    ["{ // comment\n}", /is not valid JSON/],
-    ['{"a": 1,}', /is not valid JSON/],
+    ["{ // comment\n}", /cannot be parsed as JSON: InvalidCommentToken at line 1, column 3/],
+    ['{"a": 1,}', /cannot be parsed as JSON: PropertyNameExpected at line 1, column 9/],
     ["[]", /must hold a JSON object/],
     ['{"hooks": []}', /hooks must be an object/],
     ['{"hooks": {"PreToolUse": {}}}', /hooks\.PreToolUse must be an array/],
@@ -321,6 +321,17 @@ test("Given settings Calavera cannot read, when the hooks are planned, then it i
     assert.match(result.reason, problem, contents);
     assert.match(result.reason, /^\.claude\/settings\.json: /, contents);
   }
+});
+
+test("Given settings that are not valid JSON, the conflict names the position and quotes nothing from the file (#1157)", async () => {
+  const result = await plan({ contents: '{\n  "env": { "TOKEN": FAKE_SECRET_9f3a7c }\n}\n' });
+
+  assert.equal(result.type, "conflict");
+  assert.ok(!result.reason.includes("FAKE_SECRE"), result.reason);
+  assert.match(
+    result.reason,
+    /^\.claude\/settings\.json: cannot be parsed as JSON: InvalidSymbol at line 2, column 21\. /,
+  );
 });
 
 test("A fragment must hold only command hooks that run scripts from the artifact's skill directory", async () => {

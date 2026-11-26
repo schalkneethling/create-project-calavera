@@ -544,7 +544,11 @@ test("Given unreadable settings or a broken marker pair, doctor's wiring finding
 
   assert.deepEqual(await findings(), []);
 
-  await writeFile(join(project.root, ".claude/settings.json"), "{");
+  // #1157: a secret beside the syntax error must not reach the finding.
+  await writeFile(
+    join(project.root, ".claude/settings.json"),
+    '{\n  "env": { "TOKEN": FAKE_SECRET_9f3a7c }\n}\n',
+  );
   const prePush = join(project.root, ".vite-hooks/pre-push");
   await writeFile(prePush, (await readFile(prePush, "utf8")).replace(`# calavera:${id}:end\n`, ""));
   const messages = (await findings()).map(({ level, message }) => `${level} ${message}`);
@@ -555,8 +559,9 @@ test("Given unreadable settings or a broken marker pair, doctor's wiring finding
   );
   assert.match(
     messages[1] ?? "",
-    /^warning \.claude\/settings\.json is not valid JSON .*Fix the JSON and run doctor again\./,
+    /^warning \.claude\/settings\.json cannot be parsed as JSON: InvalidSymbol at line 2, column 21, so doctor .*Fix the JSON and run doctor again\./,
   );
+  assert.ok(!messages[1]?.includes("FAKE_SECRE"), messages[1]);
 });
 
 test("Given a deselected artifact's wiring that is missing or edited, doctor's remedy is the apply that drops the record or the person's own removal", async () => {
@@ -681,6 +686,19 @@ test("Given intact blocks whose script is missing, doctor reports an error per b
     (await findings(new Set()))[0]?.message ?? "",
     /so the pre-commit hook fails and Git refuses every commit\. Because the recipe no longer selects skill-protected-branch-guard, create-project-calavera apply removes the block/,
   );
+
+  // #1112: each finding's detail is its message without the artifact's ID, for doctor's text
+  // output, which prints it under the artifact's own line.
+  for (const selected of [new Set([id]), new Set()]) {
+    for (const { message, detail } of await findings(selected)) {
+      assert.ok(message.includes(id), message);
+      assert.ok(!detail.includes(id), detail);
+      assert.equal(
+        detail,
+        message.replace(`the ${id} block`, "the block").replace(`selects ${id}`, "selects it"),
+      );
+    }
+  }
 
   await mkdir(join(project.root, skillDirectory, "scripts"), { recursive: true });
   await writeFile(join(project.root, skillDirectory, "scripts/guard.mjs"), "");
@@ -957,4 +975,44 @@ test("wiringFilesThatMention reports a link through a regular file as unresolved
     unresolved: [".vite-hooks/pre-push"],
     unreadable: [],
   });
+});
+
+// #1206: a recorded file that exists but cannot be read is an error finding that names the file
+// and the error code, and doctor goes on to check the other records.
+test("Given a recorded wiring file that cannot be read, doctor reports an error for it and checks the rest", async () => {
+  await using project = await createTemporaryFixture("wiring-doctor-unreadable", {
+    ".vite-hooks/pre-push": "vp test\n",
+  });
+  await mkdir(join(project.root, ".vite-hooks/pre-commit"));
+  await mkdir(join(project.root, ".claude/settings.json"), { recursive: true });
+
+  const findings = await artifactWiringFindings({
+    records: [
+      {
+        artifact: id,
+        viteHooks: { "pre-commit": line("pre-commit"), "pre-push": line("pre-push") },
+        claudeCode: { SessionStart: [{ hooks: [] }] },
+      },
+    ],
+    selected: new Set([id]),
+    skillDirectoryFor: () => skillDirectory,
+    cwd: project.root,
+  });
+
+  assert.deepEqual(
+    findings.map(({ level, message }) => [level, message.split(/[ :]/)[0]]),
+    [
+      ["error", ".vite-hooks/pre-commit"],
+      ["warning", ".vite-hooks/pre-push"],
+      ["error", ".claude/settings.json"],
+    ],
+  );
+  assert.equal(
+    findings[0]?.message,
+    `.vite-hooks/pre-commit cannot be read (EISDIR), so doctor cannot check the ${id} block Calavera recorded there, and the next apply stops. Make .vite-hooks/pre-commit a readable file and run doctor again.`,
+  );
+  assert.equal(
+    findings[2]?.message,
+    `.claude/settings.json cannot be read (EISDIR), so doctor cannot check the ${id} groups Calavera recorded there, and the next apply stops. Make .claude/settings.json a readable file and run doctor again.`,
+  );
 });

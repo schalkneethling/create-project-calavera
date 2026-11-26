@@ -5,14 +5,14 @@
 // change the result.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
 import { resolveDefaultBranch } from "../src/utils/default-branch.js";
 import { isolatedGitEnv } from "./git-isolation.mjs";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,8 +23,7 @@ const execFileAsync = promisify(execFile);
  * @param {string} [config]
  */
 async function scratch(t, config = "") {
-  const root = await mkdtemp(join(tmpdir(), "calavera-default-branch-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await temporaryFolder(t, "calavera-default-branch-");
   const globalConfig = join(root, "gitconfig");
   await writeFile(globalConfig, config);
   const env = isolatedGitEnv(globalConfig);
@@ -317,8 +316,7 @@ test("origin's branches do not count as local branches", async (t) => {
  */
 async function standInGit(t, env, { args, code, stderr = "", stdout = "" }) {
   const { stdout: realGit } = await execFileAsync("git", ["--exec-path"], { env });
-  const directory = await mkdtemp(join(tmpdir(), "calavera-stand-in-git-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await temporaryFolder(t, "calavera-stand-in-git-");
   const script = join(directory, "git");
   const quote = (/** @type {string} */ value) => `'${value.replaceAll("'", "'\\''")}'`;
   await writeFile(

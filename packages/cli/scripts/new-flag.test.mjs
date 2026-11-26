@@ -3,7 +3,6 @@
 // tests need neither network access nor vite-plus.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -11,12 +10,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   NPM_STALE_CACHE_HINT,
-  YARN_VERSION_TIMEOUT_MS,
   createVpCreateCommand,
   launchingPackageManager,
   newProject,
   parseArgs,
 } from "../src/index.js";
+import { listingViolations } from "../../../scripts/rehearsal-checks.mjs";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
 import {
   NEXT_PROMPT_HEADING,
@@ -42,8 +41,9 @@ const fixturesUrl = pathToFileURL(
 /**
  * The runner stub. It records its name, argv, cwd, VP_CLI_BIN, PATH, and whole
  * environment, fails as npm does when it inherits npm_config_package or
- * npm_config_call (#689), strips the
- * runner's own arguments to find what \`vp create\` receives, then acts on STUB_MODE:
+ * npm_config_call (#689), records in STUB_LOG.launcher the package manager
+ * Vite+ would pick from the npm_config_user_agent its runner passes on (#1109),
+ * strips the runner's own arguments to find what \`vp create\` receives, then acts on STUB_MODE:
  * `scaffold` writes a Vite+ project into the `--directory` target (or
  * STUB_TARGET) and, as `vp create` installs dependencies, a vite-plus whose
  * `vp fmt` formats what the bootstrap writes (#669), `unmanaged` writes a manifest without vite-plus, `unknown`
@@ -52,67 +52,50 @@ const fixturesUrl = pathToFileURL(
  * directory that also receives a Vite+ manifest.
  */
 const stubSource = `#!/usr/bin/env node
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { json, libraryManifest, plainViteManifest, vitePlusConfig, writeVitePlusFormatter } from ${JSON.stringify(fixturesUrl.href)};
 
 const argv = process.argv.slice(2);
 
-// "yarn --version" (#911): print STUB_VERSION, or fail when it is unset. It is
-// logged separately, so runner invocations stay the only entries in STUB_LOG.
-// STUB_VERSION_MODE "stdin" waits for stdin to end first, as a prompt would,
-// and "hang" never exits.
-if (argv.length === 1 && argv[0] === "--version") {
-  appendFileSync(process.env.STUB_LOG + ".version", JSON.stringify({ cwd: process.cwd() }) + "\\n");
-  if (process.env.STUB_VERSION_MODE === "hang") {
-    setInterval(() => {}, 1000);
-    await new Promise(() => {});
-  } else {
-    if (process.env.STUB_VERSION_MODE === "stdin") {
-      for await (const _chunk of process.stdin);
+// Corepack's auto-pin (#999, #1080): Corepack adds a packageManager field when
+// no package.json from the working directory up sets one. STUB_COREPACK_VERSION
+// picks the rule: "0.32.0" pins unless COREPACK_ENABLE_AUTO_PIN is "0", as
+// Corepack 0.32.0 and earlier do; any other value, or none, pins only when it is
+// "1", as Corepack 0.33.0 to 0.36.0 do. Corepack writes the outermost
+// package.json it found; this stub writes the nearest one instead, so it never
+// walks past the test's own manifest. Corepack pins before it runs the package
+// manager, so the Yarn reads below and the pnpm and yarn runners call this
+// first. npm and bunx do not, because Corepack runs npm only after
+// "corepack enable npm" and never runs Bun; vp create receives "0" under
+// every runner in any case (#1080).
+function autoPin(packageManager = "yarn@4.18.1") {
+  const value = process.env.COREPACK_ENABLE_AUTO_PIN;
+  const pins = process.env.STUB_COREPACK_VERSION === "0.32.0" ? value !== "0" : value === "1";
+  if (!pins) return;
+  for (let directory = process.cwd(); ; directory = dirname(directory)) {
+    const manifestPath = join(directory, "package.json");
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      if (manifest.packageManager === undefined) {
+        writeFileSync(manifestPath, json({ ...manifest, packageManager }));
+      }
+      return;
     }
-    if (process.env.STUB_VERSION === undefined) process.exit(2);
-    console.log(process.env.STUB_VERSION);
-    process.exit(0);
+    if (dirname(directory) === directory) return;
   }
 }
 
-// "yarn node <args>" (#936): Yarn 1 runs Node with <args> after a header line,
-// and the stub does too. Corepack sets COREPACK_ROOT in the Yarn it runs, so
-// STUB_COREPACK_ROOT stands for Corepack; without it, Node sees the COREPACK_ROOT
-// the stub inherited. STUB_NODE_MODE "fail" exits 2, "stdin" waits for stdin
-// to end first, "hang" never exits, and "silent" prints only the header lines.
-// STUB_PINS_YARN_4 stands for a project whose packageManager names Yarn 4, where
-// Yarn 1 exits 1 unless COREPACK_ROOT or SKIP_YARN_COREPACK_CHECK is set.
-if (argv[0] === "node") {
-  appendFileSync(process.env.STUB_LOG + ".node", JSON.stringify({ cwd: process.cwd() }) + "\\n");
-  if (
-    process.env.STUB_PINS_YARN_4 !== undefined &&
-    !process.env.COREPACK_ROOT &&
-    !process.env.SKIP_YARN_COREPACK_CHECK
-  ) {
-    console.error("error This project's package.json defines packageManager yarn@4.18.0.");
-    process.exit(1);
-  }
-  if (process.env.STUB_NODE_MODE === "hang") {
-    setInterval(() => {}, 1000);
-    await new Promise(() => {});
-  }
-  if (process.env.STUB_NODE_MODE === "stdin") {
-    for await (const _chunk of process.stdin);
-  }
-  if (process.env.STUB_NODE_MODE === "fail") process.exit(2);
-  console.log("yarn node v1.22.22");
-  if (process.env.STUB_NODE_MODE !== "silent") {
-    const env = { ...process.env };
-    if (process.env.STUB_COREPACK_ROOT !== undefined) env.COREPACK_ROOT = process.env.STUB_COREPACK_ROOT;
-    const { spawnSync } = await import("node:child_process");
-    const node = spawnSync(process.execPath, argv.slice(1), { env, stdio: ["ignore", "inherit", "inherit"] });
-    if (node.status !== 0) process.exit(node.status ?? 1);
-  }
-  console.log("Done in 0.05s.");
+// "yarn --version" and "yarn node": logged separately, so a test can show that Calavera never
+// reads the Yarn version or probes for Corepack, which only the Yarn 1 hint did (ADR-0023).
+if ((argv.length === 1 && argv[0] === "--version") || argv[0] === "node") {
+  appendFileSync(process.env.STUB_LOG + ".yarn-read", JSON.stringify({ argv }) + "\\n");
   process.exit(0);
 }
+
+// Corepack's own pnpm and Yarn versions, which it would write.
+const corepackPin = { pnpm: "pnpm@12.9.1", yarn: "yarn@4.18.1" }[basename(process.argv[1])];
+if (corepackPin !== undefined) autoPin(corepackPin);
 
 appendFileSync(
   process.env.STUB_LOG,
@@ -145,6 +128,36 @@ if (inherited("call")) {
 // npm create vite-plus@latest -- <args>, bunx create-vite-plus@latest <args>,
 // and <pnpm|yarn> dlx create-vite-plus@latest <args>.
 const runner = basename(process.argv[1]);
+
+// The npm_config_user_agent create-vite-plus sees (#1109), from a probe on
+// 2026-11-21 (npm 11.20.0, pnpm 12.9.1, Bun 1.3.9) of a stand-in bin that
+// printed it: npm exec and bunx keep an inherited value and set their own only
+// when none is inherited, and pnpm dlx replaces it. npm ignores an empty value
+// (loadEnv in @npmcli/config); Bun was not probed with one. Yarn 2 or later replaces it
+// too (makeScriptEnv in yarnpkg/berry scriptUtils.ts); its value is the one #909
+// measured under Yarn 4.18.1.
+const ownUserAgent = {
+  npm: "npm/11.20.0 node/v26.13.1 darwin arm64 workspaces/false",
+  bunx: "bun/1.3.9 npm/? node/v24.3.0 darwin arm64",
+  pnpm: "pnpm/12.9.1 npm/? node/? darwin arm64",
+  yarn: "yarn/4.18.1 npm/? node/v26.13.1 darwin arm64",
+}[runner];
+const launcherUserAgent =
+  runner === "npm" || runner === "bunx"
+    ? process.env.npm_config_user_agent || ownUserAgent
+    : ownUserAgent;
+// Vite+ picks the package manager of a new project from the name before the
+// first / of that value, when it names one Vite+ supports
+// (detectLauncherPackageManager in vite-plus packages/cli/src/create/utils.ts).
+const launcherName = launcherUserAgent.split("/")[0];
+appendFileSync(
+  process.env.STUB_LOG + ".launcher",
+  JSON.stringify({
+    vitePlusPackageManager: ["npm", "pnpm", "yarn", "bun"].includes(launcherName)
+      ? launcherName
+      : null,
+  }) + "\\n",
+);
 const vpCreateArgs =
   runner === "npm"
     ? argv.slice(argv.indexOf("--") + 1)
@@ -448,7 +461,11 @@ test("--new refuses an unreadable package.json before anything else", async () =
 
   await chmod(manifestPath, 0o644);
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /npm create project-calavera -- --init/);
+  // `--json` before `--new` is Calavera's own, so the refusal is a JSON result (#1227).
+  assert.match(
+    JSON.parse(result.stdout).issues[0].message,
+    /npm create project-calavera -- --init/,
+  );
   assert.deepEqual(await readInvocations(workspace.log), []);
 });
 
@@ -461,7 +478,11 @@ test("--new refuses --init and --json", async () => {
   assert.equal(withInit.code, 1);
   assert.match(withInit.stderr, /--new and --init cannot be combined/);
   assert.equal(withJson.code, 1);
-  assert.match(withJson.stderr, /--new cannot be combined with --json/);
+  // The refusal is a JSON result, because `--json` always prints JSON (#1227).
+  assert.match(
+    JSON.parse(withJson.stdout).issues[0].message,
+    /--new cannot be combined with --json/,
+  );
   assert.deepEqual(await readInvocations(workspace.log), []);
 });
 
@@ -516,10 +537,13 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   );
   // Vite+ 1.6.0 (dist/create/bin.js) picks VP_PACKAGE_MANAGER first, then, inside a monorepo,
   // the detected package manager before a forwarded one; elsewhere, a forwarded one before the
-  // detected one; then the launcher's (#958).
+  // detected one; then the launcher's (#958). Detection finds nothing in a project with neither
+  // field and none of the lockfiles or configuration files Vite+ reads, so the launcher's wins:
+  // vite-plus 1.6.0 and 1.7.0, started through `npm exec` and `bunx` under such a package.json,
+  // scaffolded with npm and Bun, not pnpm (#1028).
   assert.match(
     result.stdout,
-    /- Inside an existing project, Vite\+ uses the package manager it detects there unless --package-manager is forwarded\. Inside a monorepo, Vite\+ uses the package manager it detects for the monorepo even when --package-manager is forwarded\. A VP_PACKAGE_MANAGER environment variable overrides all of these\.\n/,
+    /- Inside an existing project, Vite\+ uses the package manager it detects there unless --package-manager is forwarded\. When that project's package\.json has no packageManager or devEngines\.packageManager field and its folder has no lockfile or package-manager configuration file that Vite\+ reads \(an \.npmrc does not count\), Vite\+ detects none and uses pnpm\. Inside a monorepo, Vite\+ uses the package manager it detects for the monorepo even when --package-manager is forwarded\. A VP_PACKAGE_MANAGER environment variable overrides all of these\.\n/,
   );
   assert.doesNotMatch(result.stdout, /Inside an existing workspace/);
   assert.match(result.stdout, /cannot be skipped/);
@@ -600,14 +624,17 @@ const launcherCases = [
     command: "bunx create-vite-plus@latest vite:library",
     launcher: "bun",
   },
-  // Yarn 1 has no dlx command, so it falls back to npm.
+  // A Yarn 1 user agent under npm, as a project .npmrc `user-agent=yarn/1.22.22` makes it. npm set
+  // npm_execpath, so Calavera does not stop (ADR-0023, Decision 2), and the runner is npm, which
+  // started it; Yarn counts as the launcher only at version 2 or later.
   {
-    label: "Yarn 1",
+    label: "a Yarn 1 user agent under npm",
     userAgent: "yarn/1.22.22 npm/? node/v26.13.1 darwin arm64",
+    env: { npm_execpath: "/usr/local/lib/node_modules/npm/bin/npm-cli.js" },
     command: "npm create vite-plus@latest -- vite:library",
     launcher: undefined,
   },
-  // A Yarn whose major version cannot be read could be Yarn 1.
+  // Yarn sets its own version in the user agent, so a value without one did not come from Yarn.
   {
     label: "a Yarn without a version",
     userAgent: "yarn/unknown npm/? node/v26.13.1 darwin arm64",
@@ -634,7 +661,7 @@ const launcherCases = [
   },
 ];
 
-for (const { label, userAgent, command, launcher } of launcherCases) {
+for (const { label, userAgent, env = {}, command, launcher } of launcherCases) {
   const packageManager = launcher ?? "npm";
 
   test(`--new chooses the ${packageManager} runner when launched through ${label}`, async () => {
@@ -643,7 +670,7 @@ for (const { label, userAgent, command, launcher } of launcherCases) {
     const result = await runCli(
       workspace,
       ["--dry-run", "--new", "vite:library"],
-      userAgent === undefined ? {} : { npm_config_user_agent: userAgent },
+      userAgent === undefined ? env : { ...env, npm_config_user_agent: userAgent },
     );
 
     assert.equal(result.code, 0, result.stderr);
@@ -689,6 +716,66 @@ test("--new lets --package-manager before --new choose the runner over the launc
   assert.match(result.stdout, /Command: bunx create-vite-plus@latest vite:library\n/);
   assert.match(result.stdout, /Vite\+ uses bun as the project's package manager/);
 });
+
+// #1109: Vite+ picks the package manager of a new project from the
+// npm_config_user_agent it sees. npm and Bun pass an inherited value on, so
+// Calavera removes it from the environment vp create receives, and the runner
+// sets its own. The confirmation must name the package manager Vite+ then
+// picks: under every launcher, under the fallbacks to npm, and when
+// --package-manager before --new chooses another runner.
+const runnerChoiceCases = [
+  ...launcherCases.map(({ label, userAgent, env = {}, launcher }) => ({
+    label: `launched through ${label}`,
+    userAgent,
+    launcherEnv: env,
+    args: [],
+    packageManager: launcher ?? "npm",
+  })),
+  ...[
+    ["npm", "pnpm/12.9.1 npm/? node/? darwin arm64", "pnpm"],
+    ["bun", "pnpm/12.9.1 npm/? node/? darwin arm64", "pnpm"],
+    ["npm", "bun/1.3.9 npm/? node/v24.3.0 darwin arm64", "Bun"],
+    ["bun", "npm/11.20.0 node/v26.13.1 darwin arm64 workspaces/false", "npm"],
+    ["pnpm", "yarn/4.18.1 npm/? node/v26.13.1 darwin arm64", "Yarn 4"],
+    ["yarn", "bun/1.3.9 npm/? node/v24.3.0 darwin arm64", "Bun"],
+  ].map(([packageManager, userAgent, launcherLabel]) => ({
+    label: `given --package-manager ${packageManager} under ${launcherLabel}`,
+    userAgent,
+    launcherEnv: {},
+    args: ["--package-manager", packageManager],
+    packageManager,
+  })),
+];
+
+for (const { label, userAgent, launcherEnv, args, packageManager } of runnerChoiceCases) {
+  test(`--new names the package manager Vite+ picks when ${label}`, async () => {
+    await using workspace = await createTemporaryWorkspace("vite-plus-choice");
+    const env =
+      userAgent === undefined ? launcherEnv : { ...launcherEnv, npm_config_user_agent: userAgent };
+
+    const preview = await runCli(workspace, ["--dry-run", ...args, "--new", "vite:library"], env);
+
+    assert.equal(preview.code, 0, preview.stderr);
+    assert.match(
+      preview.stdout,
+      new RegExp(
+        `Outside an existing project, Vite\\+ uses ${packageManager} as the project's package manager`,
+      ),
+    );
+    assert.match(preview.stdout, new RegExp(`Vite\\+ detects none and uses ${packageManager}\\.`));
+
+    // "nothing" makes the runner exit zero without a scaffold, which Calavera reports as a hard stop.
+    await runCli(workspace, ["--yes", ...args, "--new", "vite:library"], {
+      ...env,
+      STUB_MODE: "nothing",
+    });
+
+    assert.equal((await readInvocations(workspace.log)).length, 1);
+    assert.deepEqual(await readInvocations(`${workspace.log}.launcher`), [
+      { vitePlusPackageManager: packageManager },
+    ]);
+  });
+}
 
 test("--new forwards every token unchanged to the launcher's runner and adds no --package-manager", async () => {
   await using workspace = await createTemporaryWorkspace("launcher-forwarding");
@@ -780,6 +867,7 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
     result.stdout,
     /- Outside an existing project, Vite\+ uses npm as the project's package manager unless --package-manager is forwarded after --new\./,
   );
+  assert.match(result.stdout, /Vite\+ detects none and uses npm\./);
   assert.equal((await detectVitePlus(target)).status, "managed");
   assert.ok(await exists(join(target, ".agents/skills/calavera/SKILL.md")));
   assert.ok(await exists(join(target, ".calavera/state.json")));
@@ -894,479 +982,59 @@ test("--new hard-stops on a non-zero exit, names the cause, and writes nothing f
   assert.equal(await readFile(join(workspace.work, "partial/package.json"), "utf8"), "{");
 });
 
-/**
- * Runs a failing --new through the stub yarn and returns the error and the
- * working directories `yarn --version` (#911) and `yarn node` (#936) ran in.
- *
- * @param {Record<string, string>} env
- */
-async function failedYarnRun(env) {
-  await using workspace = await createTemporaryWorkspace(
-    `yarn-version-${env.STUB_VERSION ?? "none"}`,
-  );
+// #1080: Corepack pins for pnpm dlx and yarn dlx too, before the run starts, so
+// a successful run would edit a package.json above the new project as well as a
+// failed one. That edit is outside the project the person approved, so
+// vp create receives COREPACK_ENABLE_AUTO_PIN=0 under every runner, which
+// overrides a user's "1" for this run only.
+for (const corepackVersion of ["0.32.0", "0.36.0"]) {
+  for (const packageManager of ["pnpm", "yarn"]) {
+    for (const outcome of ["fail", "scaffold"]) {
+      test(`--new leaves a parent package.json untouched when ${packageManager} dlx runs under Corepack ${corepackVersion}'s auto-pin (${outcome})`, async () => {
+        await using workspace = await createTemporaryWorkspace(
+          `runner-auto-pin-${packageManager}-${outcome}`,
+        );
+        // --new refuses a directory with a package.json, so the one Corepack pins is above it.
+        const manifestPath = join(workspace.root, "package.json");
+        const manifest = json({ name: "workspace-root", private: true });
+        await writeFile(manifestPath, manifest);
+
+        const result = await runCli(
+          workspace,
+          ["--yes", "--package-manager", packageManager, "--new", "vite:library"],
+          {
+            STUB_MODE: outcome,
+            STUB_COREPACK_VERSION: corepackVersion,
+            COREPACK_ENABLE_AUTO_PIN: "1",
+          },
+        );
+        const invocations = await readInvocations(workspace.log);
+
+        assert.equal(result.code, outcome === "fail" ? 1 : 0, result.stderr);
+        assert.equal(invocations.length, 1);
+        assert.equal(invocations[0].runner, packageManager);
+        assert.equal(await readFile(manifestPath, "utf8"), manifest);
+        assert.equal(invocations[0].env.COREPACK_ENABLE_AUTO_PIN, "0");
+      });
+    }
+  }
+}
+
+test("--new adds no Yarn hint and reads no Yarn version when yarn dlx fails", async () => {
+  await using workspace = await createTemporaryWorkspace("yarn-no-hint");
   const result = await runCli(
     workspace,
     ["--yes", "--package-manager", "yarn", "--new", "vite:library"],
-    { STUB_MODE: "fail", ...env },
-    // Generous next to the CLI's own timeout, so only a CLI that never gives up reaches it.
-    { deadlineMs: YARN_VERSION_TIMEOUT_MS + 10_000 },
+    { STUB_MODE: "fail" },
   );
-  assert.equal(result.timedOut, false, "the CLI was still waiting at the test deadline");
-  const loggedCwds = async (suffix) =>
-    (await readFile(`${workspace.log}${suffix}`, "utf8").catch(() => ""))
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => realpathSync(JSON.parse(line).cwd));
-
-  // Resolved here, while the workspace still exists: macOS reports /private/var for /var.
-  return {
-    result,
-    versionCwds: await loggedCwds(".version"),
-    nodeCwds: await loggedCwds(".node"),
-    work: realpathSync(workspace.work),
-  };
-}
-
-const GUESSING_YARN_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
-
-// What yarn node prints for the Corepack probe when Corepack did not run yarn (#936).
-const NO_COREPACK = "yarn node v1.22.22\nCOREPACK_ROOT=\nDone in 0.05s.";
-
-test("--new names Yarn 1 as the cause when yarn dlx fails under Yarn 1", async () => {
-  // A COREPACK_ROOT that Calavera inherited, for example from a Corepack pnpm that
-  // started it, does not reach yarn node, so it cannot pass for Corepack running yarn (#936).
-  const { result, versionCwds, nodeCwds, work } = await failedYarnRun({
-    STUB_VERSION: "1.22.22",
-    COREPACK_ROOT: "/inherited/corepack",
-  });
-
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /exited with code 1/);
-  assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
-  assert.match(result.stderr, /Yarn 1\.22\.22/);
-  assert.match(result.stderr, /no dlx command/);
-  assert.match(result.stderr, /Corepack/);
-  assert.match(result.stderr, /--package-manager .*before --new/);
-  assert.ok(!result.stderr.includes(GUESSING_YARN_HINT));
-  assert.deepEqual(versionCwds, [work]);
-  assert.deepEqual(nodeCwds, [work]);
-});
-
-// A standalone Yarn 1 under an inherited COREPACK_ROOT runs yarn dlx even in a
-// project that pins Yarn 4, and fails because Yarn 1 has no dlx. The probe loses
-// that COREPACK_ROOT, so it turns off Yarn 1's packageManager check instead (#936).
-test("--new names Yarn 1 as the cause in a project that pins Yarn 4 under an inherited COREPACK_ROOT", async () => {
-  const { result } = await failedYarnRun({
-    STUB_VERSION: "1.22.22",
-    STUB_PINS_YARN_4: "1",
-    COREPACK_ROOT: "/inherited/corepack",
-  });
-
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /Yarn 1\.22\.22, which has no dlx command/);
-  assert.doesNotMatch(result.stderr, /could not tell/);
-});
-
-// Under Corepack with a Yarn 1 default and no packageManager field, yarn --version
-// prints 1.22.22 while yarn dlx runs Corepack's Yarn 4 (#936, probed with Corepack
-// 0.36.0), so the version alone does not name the Yarn that failed.
-test("--new does not blame Yarn 1 when Corepack ran yarn", async () => {
-  const { result, nodeCwds, work } = await failedYarnRun({
-    STUB_VERSION: "1.22.22",
-    STUB_COREPACK_ROOT: "/corepack",
-  });
 
   assert.equal(result.code, 1);
   assert.match(result.stderr, /vp create through yarn exited with code 1/);
-  assert.doesNotMatch(result.stderr, /no dlx command/);
-  assert.ok(!result.stderr.includes(GUESSING_YARN_HINT));
-  assert.match(result.stderr, /yarn --version reports Yarn 1\.22\.22, but Corepack runs yarn dlx/);
-  assert.match(result.stderr, /Yarn 2 or later unless the project pins Yarn 1/);
-  assert.deepEqual(nodeCwds, [work]);
-});
-
-test("--new does not ask whether Corepack ran yarn when yarn --version reports Yarn 2 or later", async () => {
-  const { result, nodeCwds } = await failedYarnRun({ STUB_VERSION: "4.18.1" });
-
-  assert.equal(result.code, 1);
-  assert.deepEqual(nodeCwds, []);
-});
-
-for (const [label, env, reason] of [
-  ["exits non-zero", { STUB_NODE_MODE: "fail" }, /Command failed with exit code 2/],
-  [
-    "prints no COREPACK_ROOT line",
-    { STUB_NODE_MODE: "silent" },
-    /yarn node printed no COREPACK_ROOT line/,
-  ],
-]) {
-  test(`--new keeps the existing Yarn hint and names why when yarn node ${label}`, async () => {
-    const { result } = await failedYarnRun({ STUB_VERSION: "1.22.22", ...env });
-
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /exited with code 1/);
-    assert.ok(result.stderr.includes(GUESSING_YARN_HINT));
-    assert.match(
-      result.stderr,
-      /yarn --version reports Yarn 1\.22\.22, but Calavera could not tell whether Corepack ran yarn: /,
-    );
-    assert.match(result.stderr, reason);
-  });
-}
-
-test("--new closes stdin for yarn node, so a yarn waiting for input cannot stall the error", async () => {
-  const { result } = await failedYarnRun({ STUB_VERSION: "1.22.22", STUB_NODE_MODE: "stdin" });
-
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /Yarn 1\.22\.22, which has no dlx command/);
-});
-
-test("--new stops waiting for a yarn node that hangs and still reports the runner failure", async () => {
-  const { result } = await failedYarnRun({ STUB_VERSION: "1.22.22", STUB_NODE_MODE: "hang" });
-
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /vp create through yarn exited with code 1/);
-  assert.ok(result.stderr.includes(GUESSING_YARN_HINT));
-  assert.match(
-    result.stderr,
-    /could not tell whether Corepack ran yarn: Command timed out after 5000 milliseconds/,
-  );
-});
-
-test("--new adds no Yarn hint when yarn dlx fails under Yarn 2 or later", async () => {
-  const { result } = await failedYarnRun({ STUB_VERSION: "4.18.1" });
-
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /exited with code 1/);
-  assert.doesNotMatch(result.stderr, /dlx/);
+  assert.doesNotMatch(result.stderr, /dlx|Yarn 1|Yarn 2|Corepack/);
   assert.match(result.stderr, /partial scaffold that belongs to Vite\+\.\s*$/);
+  // Neither `yarn --version` nor `yarn node` ran (ADR-0023, Decision 3).
+  assert.equal(await exists(`${workspace.log}.yarn-read`), false);
 });
-
-for (const [label, env, reason] of [
-  ["exits non-zero", {}, /could not read the Yarn version: Command failed with exit code 2/],
-  [
-    "prints no version",
-    { STUB_VERSION: "" },
-    /yarn --version printed nothing, which is not a version/,
-  ],
-  [
-    "prints something else",
-    { STUB_VERSION: "yarn is not configured" },
-    /yarn --version printed "yarn is not configured", which is not a version/,
-  ],
-]) {
-  test(`--new keeps the existing Yarn hint and names why when yarn --version ${label}`, async () => {
-    const { result } = await failedYarnRun(env);
-
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /exited with code 1/);
-    assert.ok(result.stderr.includes(GUESSING_YARN_HINT));
-    assert.match(result.stderr, reason);
-  });
-}
-
-test("--new closes stdin for yarn --version, so a yarn waiting for input cannot stall the error", async () => {
-  const { result } = await failedYarnRun({ STUB_VERSION: "1.22.22", STUB_VERSION_MODE: "stdin" });
-
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /Yarn 1\.22\.22, which has no dlx command/);
-});
-
-test("--new stops waiting for a yarn --version that hangs and still reports the runner failure", async () => {
-  const { result } = await failedYarnRun({ STUB_VERSION_MODE: "hang" });
-
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /vp create through yarn exited with code 1/);
-  assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
-  assert.ok(result.stderr.includes(GUESSING_YARN_HINT));
-  assert.match(
-    result.stderr,
-    /could not read the Yarn version: Command timed out after 5000 milliseconds/,
-  );
-});
-
-// In-process, so mutation testing sees the version parsing (#911). Only a full
-// major.minor.patch at the start of the output counts as a version, and only
-// the version itself reaches the message.
-for (const [output, expected, shown] of [
-  ["1.22.22", "yarn 1", "1.22.22"],
-  ["1.0.0-rc.1", "yarn 1", "1.0.0-rc.1"],
-  ["0.27.5", "yarn 1", "0.27.5"],
-  ["1.22.22\nwarning: an extra line", "yarn 1", "1.22.22"],
-  ["2.4.3", "none"],
-  ["10.0.0", "none"],
-  ["1.22", "guess"],
-  ["v1.22.22", "guess"],
-  ["", "guess"],
-  [undefined, "guess"],
-]) {
-  test(`--new chooses the ${expected} hint when yarn --version reports ${JSON.stringify(output)}`, async () => {
-    const message = await failedNewMessage("yarn", { exitCode: 1 }, async () => output);
-
-    assert.match(message, /exited with code 1/);
-    assert.equal(message.includes(GUESSING_YARN_HINT), expected === "guess");
-    assert.equal(/has no dlx command/.test(message), expected === "yarn 1");
-    assert.doesNotMatch(message, /warning: an extra line/);
-    if (expected === "yarn 1") {
-      assert.ok(message.includes(`is Yarn ${shown}, which has no dlx command`));
-    }
-    if (expected === "none") {
-      assert.match(message, /may hold a partial scaffold that belongs to Vite\+\.$/);
-    }
-    if (expected === "none" || output === undefined) {
-      assert.doesNotMatch(message, /which is not a version|could not read/);
-    }
-    if (output === undefined) {
-      assert.ok(message.endsWith(GUESSING_YARN_HINT));
-    }
-  });
-}
-
-test("--new keeps the version read failure as the cause and names it in the hint", async () => {
-  await using workspace = await createTemporaryWorkspace("yarn-version-throws");
-  const previousCwd = process.cwd();
-  // A plain Error: only its first line reaches the message. The execa
-  // shortMessage path is covered by the CLI test where yarn --version exits 2.
-  const failure = new Error("spawn yarn EACCES\nmore detail");
-
-  process.chdir(workspace.work);
-
-  try {
-    const error = await newProject(
-      parseArgs(["--yes", "--package-manager", "yarn", "--new", "vite:library"]),
-      {
-        spawnRunner: async () => ({ exitCode: 1, signal: null }),
-        readYarnVersion: async () => {
-          throw failure;
-        },
-      },
-    ).then(
-      () => assert.fail("expected --new to fail"),
-      (rejection) => rejection,
-    );
-
-    assert.ok(error.message.includes(GUESSING_YARN_HINT));
-    assert.match(error.message, /could not read the Yarn version: spawn yarn EACCES\.$/);
-    assert.equal(error.cause, failure);
-  } finally {
-    process.chdir(previousCwd);
-  }
-});
-
-test("--new names a thrown value that is not an Error and keeps it as the cause", async () => {
-  const error = await failedNewError("yarn", async () => {
-    throw "spawn refused";
-  });
-
-  assert.match(error.message, /could not read the Yarn version: spawn refused\.$/);
-  assert.equal(error.cause, "spawn refused");
-});
-
-test("--new sets no cause when the Yarn version was read", async () => {
-  const error = await failedNewError("yarn", async () => "1.22.22");
-
-  assert.equal(error.cause, undefined);
-});
-
-// In-process, so mutation testing sees the Corepack probe parsing (#936). Only a
-// whole COREPACK_ROOT= line counts, and only a non-empty value means Corepack.
-for (const [output, expected] of [
-  [NO_COREPACK, "yarn 1"],
-  ["COREPACK_ROOT=", "yarn 1"],
-  // Windows ends lines with \r\n, and execa removes only the final newline.
-  ["yarn node v1.22.22\r\nCOREPACK_ROOT=\r\nDone in 0.05s.", "yarn 1"],
-  ["yarn node v1.22.22\r\nCOREPACK_ROOT=C:\\corepack\r\nDone in 0.05s.", "corepack"],
-  ["yarn node v1.22.22\nCOREPACK_ROOT=/corepack\nDone in 0.05s.", "corepack"],
-  ["COREPACK_ROOT=/corepack", "corepack"],
-  ["yarn node v1.22.22\nDone in 0.05s.", "guess"],
-  ["NOT_COREPACK_ROOT=/corepack", "guess"],
-  ["COREPACK_ROOT =/corepack", "guess"],
-  ["", "guess"],
-]) {
-  test(`--new chooses the ${expected} hint when yarn node prints ${JSON.stringify(output)}`, async () => {
-    const message = await failedNewMessage(
-      "yarn",
-      { exitCode: 1 },
-      async () => "1.22.22",
-      async () => output,
-    );
-
-    assert.match(message, /exited with code 1/);
-    assert.equal(message.includes(GUESSING_YARN_HINT), expected === "guess");
-    assert.equal(
-      message.includes("is Yarn 1.22.22, which has no dlx command"),
-      expected === "yarn 1",
-    );
-    assert.equal(
-      message.endsWith(
-        " yarn --version reports Yarn 1.22.22, but Corepack runs yarn dlx with Yarn 2 or later unless the project pins Yarn 1, for example in the packageManager field of package.json. If it does, pin Yarn 2 or later or pass another --package-manager before --new.",
-      ),
-      expected === "corepack",
-    );
-    if (expected === "guess") {
-      assert.ok(
-        message.endsWith(
-          `${GUESSING_YARN_HINT} yarn --version reports Yarn 1.22.22, but Calavera could not tell whether Corepack ran yarn: yarn node printed no COREPACK_ROOT line.`,
-        ),
-      );
-    }
-  });
-}
-
-test("--new keeps a Corepack probe failure as the cause and names it in the hint", async () => {
-  const failure = new Error("spawn yarn EACCES\nmore detail");
-  const error = await failedNewError(
-    "yarn",
-    async () => "1.22.22",
-    async () => {
-      throw failure;
-    },
-  );
-
-  assert.ok(error.message.includes(GUESSING_YARN_HINT));
-  assert.match(error.message, /could not tell whether Corepack ran yarn: spawn yarn EACCES\.$/);
-  assert.equal(error.cause, failure);
-});
-
-test("--new sets no cause when Corepack ran yarn", async () => {
-  const error = await failedNewError(
-    "yarn",
-    async () => "1.22.22",
-    async () => "COREPACK_ROOT=/corepack",
-  );
-
-  assert.match(error.message, /Corepack runs yarn dlx with Yarn 2 or later/);
-  assert.equal(error.cause, undefined);
-});
-
-for (const [label, readYarnVersion] of [
-  [
-    "fails",
-    async () => {
-      throw new Error("spawn yarn ENOENT");
-    },
-  ],
-  ["prints something that is not a version", async () => "1.22"],
-]) {
-  test(`--new does not run the Corepack probe when yarn --version ${label}`, async () => {
-    let probed = false;
-    const error = await failedNewError("yarn", readYarnVersion, async () => {
-      probed = true;
-      return NO_COREPACK;
-    });
-
-    assert.equal(probed, false);
-    assert.ok(error.message.includes(GUESSING_YARN_HINT));
-  });
-}
-
-test("--new does not run the Corepack probe when yarn --version reports Yarn 2 or later", async () => {
-  let probed = false;
-  const message = await failedNewMessage(
-    "yarn",
-    { exitCode: 1 },
-    async () => "4.18.1",
-    async () => {
-      probed = true;
-      return NO_COREPACK;
-    },
-  );
-
-  assert.equal(probed, false);
-  assert.doesNotMatch(message, /dlx|Corepack/);
-});
-
-/**
- * @param {string} packageManager
- * @param {(cwd: string) => Promise<string | undefined>} readYarnVersion
- * @param {(cwd: string) => Promise<string>} [readYarnCorepackRoot]
- */
-async function failedNewError(
-  packageManager,
-  readYarnVersion,
-  readYarnCorepackRoot = async () => NO_COREPACK,
-) {
-  await using workspace = await createTemporaryWorkspace(`error-${packageManager}`);
-  const previousCwd = process.cwd();
-
-  process.chdir(workspace.work);
-
-  try {
-    return await newProject(
-      parseArgs(["--yes", "--package-manager", packageManager, "--new", "vite:library"]),
-      {
-        spawnRunner: async () => ({ exitCode: 1, signal: null }),
-        readYarnVersion,
-        readYarnCorepackRoot,
-      },
-    ).then(
-      () => assert.fail("expected --new to fail"),
-      (rejection) => rejection,
-    );
-  } finally {
-    process.chdir(previousCwd);
-  }
-}
-
-test("--new reads the Yarn version from the yarn on PATH in the working directory", async () => {
-  await using workspace = await createTemporaryWorkspace("yarn-version-in-process");
-  const previousCwd = process.cwd();
-  const keys = ["PATH", "STUB_LOG", "STUB_VERSION"];
-  const previousEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
-  const run = () =>
-    newProject(parseArgs(["--yes", "--package-manager", "yarn", "--new", "vite:library"]), {
-      spawnRunner: async () => ({ exitCode: 1, signal: null }),
-    }).then(
-      () => assert.fail("expected --new to fail"),
-      (rejection) => rejection,
-    );
-
-  process.chdir(workspace.work);
-  Object.assign(process.env, {
-    PATH: stubPath(workspace),
-    STUB_LOG: workspace.log,
-    STUB_VERSION: "1.22.22",
-  });
-
-  try {
-    const error = await run();
-    const versionLog = await readFile(`${workspace.log}.version`, "utf8");
-
-    assert.match(error.message, /Yarn 1\.22\.22, which has no dlx command/);
-    assert.equal(realpathSync(JSON.parse(versionLog.trim()).cwd), realpathSync(workspace.work));
-
-    process.env.STUB_VERSION = "4.18.1";
-    assert.doesNotMatch((await run()).message, /dlx/);
-
-    delete process.env.STUB_VERSION;
-    const unknown = await run();
-
-    assert.ok(unknown.message.includes(GUESSING_YARN_HINT));
-    assert.match(unknown.message, /Command failed with exit code 2/);
-    assert.notEqual(unknown.cause, undefined);
-  } finally {
-    process.chdir(previousCwd);
-    for (const key of keys) {
-      if (previousEnv[key] === undefined) delete process.env[key];
-      else process.env[key] = previousEnv[key];
-    }
-  }
-});
-
-for (const packageManager of ["npm", "pnpm", "bun"]) {
-  test(`--new does not run yarn --version when the ${packageManager} runner fails`, async () => {
-    await using workspace = await createTemporaryWorkspace(`no-yarn-version-${packageManager}`);
-    const result = await runCli(
-      workspace,
-      ["--yes", "--package-manager", packageManager, "--new", "vite:library"],
-      { STUB_MODE: "fail", STUB_VERSION: "1.22.22" },
-    );
-
-    assert.equal(result.code, 1);
-    assert.equal(await exists(`${workspace.log}.version`), false);
-    assert.doesNotMatch(result.stderr, /Yarn 1/);
-  });
-}
 
 test("--new hard-stops when the scaffold is unmanaged and names the finding", async () => {
   await using workspace = await createTemporaryWorkspace("unmanaged");
@@ -1544,22 +1212,23 @@ test("--new names the terminating signal when the runner is killed", async () =>
       command: "npm",
       args: ["create", "vite-plus@latest", "--", "vite:library"],
       cwd: workspace.work,
-      env: {},
+      env: { COREPACK_ENABLE_AUTO_PIN: "0" },
     },
   ]);
 });
 
-test("--new removes only the npm exec settings from the environment vp create receives", async () => {
+test("--new removes only the launch settings from the environment vp create receives and turns off Corepack's auto-pin", async () => {
   await using workspace = await createTemporaryWorkspace("launch-settings");
   const previousCwd = process.cwd();
   /** @type {Array<{ env?: Record<string, string | undefined> }>} */
   const spawned = [];
   const kept = {
-    npm_config_user_agent: "npm/11.20.0 node/v24.22.0 darwin arm64 workspaces/false",
     // Other npm settings, including one whose name starts the same way, pass through.
     npm_config_package_lock: "false",
     npm_config_cache: "/home/user/.npm",
     npm_package_name: "create-project-calavera",
+    // A name that only ends with a removed one passes through.
+    CALAVERA_npm_config_user_agent: "kept",
     CALAVERA_PASSTHROUGH: "kept",
     PATH: "/usr/bin",
   };
@@ -1577,6 +1246,13 @@ test("--new removes only the npm exec settings from the environment vp create re
           // npm reads the npm_config_ prefix in any case.
           NPM_CONFIG_PACKAGE: "create-project-calavera",
           Npm_Config_Call: "create-project-calavera --new",
+          // The launcher's user agent (#1109). npm also reads a - for the _ inside a name.
+          npm_config_user_agent: "yarn/4.18.1 npm/? node/v26.13.1 darwin arm64",
+          NPM_CONFIG_USER_AGENT: "yarn/4.18.1 npm/? node/v26.13.1 darwin arm64",
+          "npm_config_user-agent": "yarn/4.18.1 npm/? node/v26.13.1 darwin arm64",
+          // A user's own auto-pin setting (#1080), in any case as Windows reads it.
+          COREPACK_ENABLE_AUTO_PIN: "1",
+          corepack_enable_auto_pin: "1",
         },
         spawnRunner: async (invocation) => {
           spawned.push(invocation);
@@ -1589,7 +1265,8 @@ test("--new removes only the npm exec settings from the environment vp create re
   }
 
   assert.equal(spawned.length, 1);
-  assert.deepEqual(spawned[0].env, kept);
+  // "0" is the one value that turns auto-pin off in every Corepack version (#1080).
+  assert.deepEqual(spawned[0].env, { ...kept, COREPACK_ENABLE_AUTO_PIN: "0" });
 });
 
 test("--new succeeds with npm when Calavera was started with npx --package (#689)", async () => {
@@ -1615,10 +1292,16 @@ test("--new succeeds with npm when Calavera was started with npx --package (#689
   assert.equal(invocations.length, 1);
   assert.equal(invocations[0].runner, "npm");
 
-  // Every variable Calavera was started with reaches the runner unchanged, except the two settings.
+  // Every variable Calavera was started with reaches the runner unchanged, except the
+  // two settings and the user agent (#1109), and auto-pin is off (#1080).
   const expected = cliEnvironment(workspace, launch);
   delete expected.npm_config_package;
   delete expected.npm_config_call;
+  delete expected.npm_config_user_agent;
+  for (const key of Object.keys(expected)) {
+    if (key.toUpperCase() === "COREPACK_ENABLE_AUTO_PIN") delete expected[key];
+  }
+  expected.COREPACK_ENABLE_AUTO_PIN = "0";
   assert.deepEqual(invocations[0].env, expected);
 });
 
@@ -1627,12 +1310,7 @@ test("--new succeeds with npm when Calavera was started with npx --package (#689
  * @param {{ exitCode: number | null, signal?: string }} exit
  * @returns {Promise<string>}
  */
-async function failedNewMessage(
-  packageManager,
-  exit,
-  readYarnVersion = async () => undefined,
-  readYarnCorepackRoot = async () => NO_COREPACK,
-) {
+async function failedNewMessage(packageManager, exit) {
   await using workspace = await createTemporaryWorkspace(`hint-${packageManager ?? "default"}`);
   const previousCwd = process.cwd();
 
@@ -1646,9 +1324,8 @@ async function failedNewMessage(
         "--new",
         "vite:library",
       ]),
-      // By default no version, so the Yarn hint does not depend on the yarn installed here (#911),
-      // and no launcher, so the default runner is npm whichever package manager runs these tests (#909).
-      { spawnRunner: async () => exit, readYarnVersion, readYarnCorepackRoot, env: {} },
+      // No launcher, so the default runner is npm whichever package manager runs these tests (#909).
+      { spawnRunner: async () => exit, env: {} },
     ).then(
       () => assert.fail("expected --new to fail"),
       (rejection) => rejection,
@@ -1721,10 +1398,8 @@ for (const packageManager of ["pnpm", "yarn", "bun"]) {
     assert.match(message, /exited with code 1/);
     assert.doesNotMatch(message, /npm cache npx/);
     assert.doesNotMatch(message, /command not found/);
-    assert.equal(/yarn dlx needs Yarn 2/.test(message), packageManager === "yarn");
-    if (packageManager !== "yarn") {
-      assert.match(message, /may hold a partial scaffold that belongs to Vite\+\.$/);
-    }
+    // No runner adds a hint of its own, Yarn included (ADR-0023 removed the Yarn 1 hint).
+    assert.match(message, /may hold a partial scaffold that belongs to Vite\+\.$/);
   });
 }
 
@@ -1771,9 +1446,10 @@ test("--new --config refuses malformed JSON and an invalid recipe before spawnin
   await writeFile(malformed, "{ not json");
   await writeFile(invalid, json({ version: 1, profile: "no-such-profile" }));
 
-  for (const [recipePath, cause] of [
-    [malformed, /JSON/],
-    [invalid, /profile/i],
+  // #1157: malformed JSON and an invalid recipe stay distinguishable.
+  for (const [recipePath, failure, cause] of [
+    [malformed, /cannot be parsed as JSON/, /at line 1, column \d+/],
+    [invalid, /not a valid recipe/, /profile/i],
   ]) {
     const result = await runCli(workspace, ["--yes", "--config", recipePath, "--new", "vite"], {
       STUB_MODE: "scaffold",
@@ -1781,7 +1457,7 @@ test("--new --config refuses malformed JSON and an invalid recipe before spawnin
 
     assert.equal(result.code, 1);
     assert.match(result.stderr, /--new refused/);
-    assert.match(result.stderr, /not a valid recipe/);
+    assert.match(result.stderr, failure);
     assert.ok(result.stderr.includes(recipePath), result.stderr);
     assert.match(result.stderr, cause);
   }
@@ -1946,7 +1622,7 @@ test("--new prints the bootstrap summary in labeled groups, with the prompt as i
       "",
       "Notes:",
       "  Installed skills are available under .agents/skills/.",
-      "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+      "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
       "",
       recipeBlock(target, {
         cd: `cd ${target}`,
@@ -1957,6 +1633,48 @@ test("--new prints the bootstrap summary in labeled groups, with the prompt as i
       NEXT_PROMPT_HEADING,
       "",
       await readmeAgentPrompt(),
+      "",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("--init in a project --new made lists every file it leaves unchanged once, under Changes (#956)", async () => {
+  await using workspace = await createTemporaryWorkspace("summary-rerun");
+  const created = await runCli(workspace, ["--yes", "--new", "vite:library", "--no-interactive"], {
+    STUB_MODE: "scaffold",
+    STUB_TARGET: "my-lib",
+  });
+  assert.equal(created.code, 0, created.stderr);
+
+  const target = join(workspace.work, "my-lib");
+  const result = await runCli({ ...workspace, work: target }, ["--init", "--yes"]);
+  const summary = result.stdout.slice(0, result.stdout.indexOf("Next steps:"));
+
+  assert.equal(result.code, 0, result.stderr);
+  // .calavera/state.json is left out when it is unchanged (#957); every other file --new wrote
+  // is named once, as the #918 rehearsal's listing check requires.
+  const unchanged = [
+    ".agents/skills/calavera",
+    ".coderabbit.yaml",
+    "AGENTS.md",
+    ".agents/calavera/mcp.md",
+  ];
+  assert.deepEqual(listingViolations(result.stdout, unchanged), []);
+  assert.equal(
+    summary,
+    [
+      "Calavera agent bootstrap complete.",
+      "",
+      "Changes:",
+      "  Skipped .agents/skills/calavera: Already up to date.",
+      "  Skipped .coderabbit.yaml: Already up to date.",
+      "  Skipped AGENTS.md: Already up to date.",
+      "  Skipped .agents/calavera/mcp.md: Already up to date.",
+      "",
+      "Notes:",
+      "  Installed skills are available under .agents/skills/.",
+      "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
       "",
       "",
     ].join("\n"),

@@ -1,5 +1,5 @@
 import { AI_TARGET_LABELS, aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
-import { normalizeAiItems } from "./ai/recipe-items.js";
+import { assertSupportedTarget, normalizeAiItems } from "./ai/recipe-items.js";
 import { integrationCatalog, integrationStatusLabels } from "./catalog.js";
 import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
 import {
@@ -75,6 +75,9 @@ export const projectLocalCommandNotes = Object.freeze({
 
 export const aiArtifactTypes = ["skill", "hook", "agent"];
 
+/** The values integrationOptions.stylelint-baseline.severity accepts; the first is the default. */
+export const STYLELINT_BASELINE_SEVERITIES = Object.freeze(["warning", "error"]);
+
 export const recipeCompositionToolNames = Object.freeze([
   "list_profiles",
   "list_integrations",
@@ -91,6 +94,7 @@ export const recipeCompositionToolNames = Object.freeze([
 
 export const standardMcpToolNames = Object.freeze([
   "inspect_project",
+  "artifact_status",
   ...recipeCompositionToolNames,
   "dry_run_apply",
   "apply_recipe",
@@ -101,6 +105,8 @@ export const webMcpToolNames = Object.freeze([...recipeCompositionToolNames, "do
 export const recipeToolDescriptions = Object.freeze({
   inspect_project:
     "Inspect the current project for package-manager signals, existing tooling files, and likely Calavera adoption conflicts before composing or applying a recipe. Also reports whether the project is managed by Vite+ and which signal matched.",
+  artifact_status:
+    "Report the agent artifacts the recipe selects and the artifact lock records, from the same core function as the artifacts status CLI command: each artifact's locked version and channel, whether its files are installed, managed, or locally edited, and, with checkUpdates, whether its channel has a newer release and the CLI command that applies it. Writes nothing into the project, so it never rolls back a pending artifact transaction: it then returns phase pending-transaction and no artifacts, with rollbackFiles, which lists the files the rollback would restore or remove, and remedy. Show rollbackFiles and remedy to the user, who must save any edits to those files before running artifacts status. Installing, updating, and migrating artifacts stay CLI commands.",
   list_profiles:
     "List Calavera profiles, package managers, and default integrations. Use this first when composing a recipe.",
   list_integrations:
@@ -124,9 +130,9 @@ export const recipeToolDescriptions = Object.freeze({
   explain_recipe:
     "Explain the integrations selected by a Calavera recipe, including profile defaults and automatically included parent integrations.",
   dry_run_apply:
-    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera. Lists in scriptChanges each package.json script apply would add, change, or rename, with the command it will run and, for a changed or renamed script, the command it replaces; show each command to the user. Lists in wiringChanges each hook line and Claude Code hook group apply would write for a selected artifact, and in wiringWarnings why written hooks would not run yet, with the remedy; show both to the user. Lists in ignoreChanges each line apply would add to or remove from .gitignore and .htmlvalidateignore; show each to the user. Lists in integrationInputs each integration option Calavera filled in, such as github-repository-controls.defaultBranch, with where the value came from, and in inputWarnings input values that disagree, such as a protected branch that is not that default branch; show both to the user. Returns in result.recipe the recipe with every artifact input and integration input filled in; pass that recipe to apply_recipe after approval. When the current directory has no package.json of its own but a manifest above it was found, returns result.manifestDecision with the ancestor manifest and three choices, and plans nothing; show the choices to the user, never pick one, and pass the user's choice as manifestChoice to dry_run_apply and then apply_recipe.",
+    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera. Lists in scriptChanges each package.json script apply would add, change, or rename, with the command it will run and, for a changed or renamed script, the command it replaces; show each command to the user. Lists in wiringChanges each hook line and Claude Code hook group apply would write for a selected artifact, and in wiringWarnings why written hooks would not run yet, with the remedy; show both to the user. Lists in ignoreChanges each line apply would add to or remove from .gitignore and .htmlvalidateignore; show each to the user. Lists in stagingLeftovers each entry of .calavera/.staging/: an old copy of a locked package that apply would remove, or anything else, which apply keeps; show each to the user. Lists in temporaryFolderLeftovers each temporary folder the dry run could not remove, with the reason; show each to the user as a warning. Lists in integrationInputs each integration option Calavera filled in, such as github-repository-controls.defaultBranch, with where the value came from, and in inputWarnings input values that disagree, such as a protected branch that is not that default branch; show both to the user. Returns in result.recipe the recipe with every artifact input and integration input filled in; pass that recipe to apply_recipe after approval. When the current directory has no package.json of its own but a manifest above it was found, returns result.manifestDecision with the ancestor manifest and three choices, and plans nothing; show the choices to the user, never pick one, and pass the user's choice as manifestChoice to dry_run_apply and then apply_recipe.",
   apply_recipe:
-    "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval. Pass the recipe dry_run_apply returned in result.recipe: apply_recipe refuses an artifact input or an integration input, such as github-repository-controls.defaultBranch, that the recipe does not record.",
+    "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval. Pass the recipe dry_run_apply returned in result.recipe: apply_recipe refuses an artifact input or an integration input, such as github-repository-controls.defaultBranch, that the recipe does not record. Lists in temporaryFolderLeftovers each temporary folder Calavera could not remove after applying, with the reason; apply still finished, so show each to the user as a warning with its remedy.",
   download_recipe:
     "Download a Calavera recipe as calavera.config.json. Pass a recipe from compose_recipe, or omit recipe to download the current visible composer recipe.",
 });
@@ -140,7 +146,8 @@ export const mcpComposeRecipeDescription = `${recipeToolDescriptions.compose_rec
 
 export const recipeToolInputDescriptions = Object.freeze({
   profile: "Base Calavera tooling profile.",
-  profileFilter: "Optional profile filter.",
+  profileFilter:
+    "Optional profile filter. Omit it, or pass null or an empty string, to list every integration. A value that is not a profile ID lists no integrations.",
   packageManager: "Package manager used for dependency installation and generated scripts.",
   tools: "Integration IDs or labels. Omit to use the selected profile defaults from list_profiles.",
   integrationId: "Integration ID or label from list_integrations.",
@@ -151,10 +158,16 @@ export const recipeToolInputDescriptions = Object.freeze({
     'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
+    "Options keyed by selected integration ID. Stylelint Baseline requires available, which is widely, newly, or a Baseline year, and accepts severity, warning by default or error; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
+  artifactStatusConfig:
+    "The recipe file path, relative to the project, as `artifacts status --config` names it.",
+  checkUpdates:
+    "Resolve each artifact on its channel in the npm registry to report available updates, as `artifacts status --check-updates` does. The lookup contacts the registry and writes nothing into the project.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
-  baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
-  baselineLimit: "Maximum number of Baseline feature search results.",
+  baselineQuery:
+    "Text used to search the CSS-focused Baseline feature catalog. Omit it, or pass null or an empty string, to list features without filtering.",
+  baselineLimit:
+    "Maximum number of Baseline feature search results, a positive integer. Any other value, such as null, uses the default of 20.",
   baselineFeatures: "One or more Baseline feature IDs used to calculate a recommendation.",
   recipe: "A Calavera recipe object.",
   packageManagerOverride:
@@ -163,7 +176,7 @@ export const recipeToolInputDescriptions = Object.freeze({
   writeConfig: "Write the approved recipe to the config path before applying.",
   noInstall: "Skip package manager dependency installation.",
   reownManagedFiles:
-    "Tracked Calavera-managed file paths whose current contents the user has approved as the baseline for this dry-run/apply.",
+    "Tracked Calavera-managed file paths with local edits that the user has approved replacing: apply_recipe replaces each file's current contents with Calavera's, so the edits are lost unless the user saved a copy first.",
   manifestChoice:
     "Only when the current directory has no package.json of its own but dry_run_apply returned manifestDecision: the choice the user made. create-here creates package.json here and applies with the ancestor's Vite+ verdict; apply-at-ancestor applies in the ancestor manifest's directory instead; abandon changes nothing. Never choose for the user. Omit it otherwise.",
   optionalDownloadRecipe:
@@ -184,10 +197,10 @@ const profileSpecificIntegrations = {
 };
 
 /**
- * Profile ids removed by ADR-0011, kept only so that validation can name the
+ * Profile ids removed by ADR-0011, kept only so that validation and `doctor` can name the
  * replacement. None of them is accepted anywhere.
  */
-const removedProfileReplacements = {
+export const removedProfileReplacements = {
   modern: "default",
   classic: "default",
 };
@@ -421,6 +434,11 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
       throw new Error(`Invalid aiArtifacts[${index}].target: skill artifacts do not use target.`);
     }
 
+    // An empty target falls back to the default target below, so only a named one is checked.
+    if (target) {
+      assertSupportedTarget(artifact, target, index, id);
+    }
+
     return {
       id,
       target: artifact.defaultTarget ? target || artifact.defaultTarget : undefined,
@@ -432,15 +450,36 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 }
 
 /**
- * Checks the names and the shape of recorded input values. The value's own check, such as a valid
- * branch name, needs Git, so the CLI runs it before apply plans anything.
+ * Refuses artifact inputs that are not an object of values keyed by input name.
+ *
+ * @param {unknown} inputs
+ * @param {number} index The artifact's position in aiArtifacts.
  */
-function normalizeAiArtifactInputValues(inputs, artifact, index) {
+function assertAiArtifactInputsObject(inputs, index) {
   if (!isPlainObject(inputs)) {
     throw new Error(
       `Invalid aiArtifacts[${index}].inputs: expected an object of input values keyed by input name.`,
     );
   }
+}
+
+/**
+ * The refusal of a tool input part that only the Node.js MCP server can serve, such as the artifact
+ * `inputs` of `compose_recipe` (ADR-0018, Decision 4). The Composer's WebMCP handlers give it,
+ * because the browser cannot check those values.
+ *
+ * @param {string} path Where the input names the part, such as aiArtifacts[0].inputs.
+ */
+export function nodeOnlyInputMessage(path) {
+  return `Invalid ${path}: only the Calavera MCP server accepts this field, because checking it needs Node.js. Leave it out of the Composer's tool call, or call the MCP server's tool of the same name.`;
+}
+
+/**
+ * Checks the names and the shape of recorded input values. The value's own check, such as a valid
+ * branch name, needs Git, so the CLI runs it before apply plans anything.
+ */
+function normalizeAiArtifactInputValues(inputs, artifact, index) {
+  assertAiArtifactInputsObject(inputs, index);
 
   for (const [name, value] of Object.entries(inputs)) {
     if (!Object.hasOwn(artifact.inputs ?? {}, name)) {
@@ -538,15 +577,17 @@ export function resolveRecipeIntegrations(recipe) {
   return integrationCatalog.filter((integration) => selected.has(integration.id));
 }
 
+/** The refusal for a recipe that selects the repository controls integration without its options. */
+const REPOSITORY_CONTROLS_OPTIONS_REQUIRED =
+  "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.";
+
 export function normalizeIntegrationOptions(integrationOptions, integrationIds) {
   const resolvedIds = new Set(
     resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
   );
   if (integrationOptions === undefined) {
     if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
-      throw new Error(
-        "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",
-      );
+      throw new Error(REPOSITORY_CONTROLS_OPTIONS_REQUIRED);
     }
     return undefined;
   }
@@ -586,9 +627,9 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
     }
 
     const available = normalizeBaselineTarget(options.available);
-    const severity = options.severity ?? "warning";
+    const severity = options.severity ?? STYLELINT_BASELINE_SEVERITIES[0];
 
-    if (severity !== "warning" && severity !== "error") {
+    if (!STYLELINT_BASELINE_SEVERITIES.includes(severity)) {
       throw new Error("Stylelint Baseline severity must be warning or error.");
     }
 
@@ -637,9 +678,7 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
       ? repositoryControls
       : { ...repositoryControls, requireCodeqlResults };
   } else if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
-    throw new Error(
-      "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",
-    );
+    throw new Error(REPOSITORY_CONTROLS_OPTIONS_REQUIRED);
   }
 
   if (Object.hasOwn(integrationOptions, STRYKER_ID)) {
@@ -772,8 +811,14 @@ export function listProfilesResponse(options = {}) {
 }
 
 export function listIntegrationsResponse({ profile } = {}) {
+  // ADR-0011: a removed profile ID is refused with a message that names its replacement, instead of
+  // being read as a filter that matches no integration.
+  if (typeof profile === "string" && Object.hasOwn(removedProfileReplacements, profile)) {
+    assertKnownProfile(profile);
+  }
   return {
-    profile: profile ?? null,
+    // A falsy profile, such as "" or false, filters nothing, so the response reports no filter.
+    profile: profile || null,
     integrations: listIntegrationOptions(profile),
   };
 }
@@ -830,8 +875,10 @@ export function explainRecipeResponse(recipeInput) {
     dependencies: dependencyListForRecipe(recipe),
     aiArtifacts: listAiArtifactOptions().filter((artifact) =>
       Array.isArray(recipe.ai)
-        ? recipe.ai.some((item) => item.type === artifact.type && item.src === artifact.src) ||
-          recipe.ai.some((item) => item.id === artifact.id)
+        ? // #1024: validation trims a legacy type and src, so the comparison trims them too.
+          recipe.ai.some(
+            (item) => item.type?.trim() === artifact.type && item.src.trim() === artifact.src,
+          ) || recipe.ai.some((item) => item.id === artifact.id)
         : false,
     ),
   };
