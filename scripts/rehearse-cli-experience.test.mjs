@@ -876,9 +876,15 @@ test("the command stops before it creates anything when a prerequisite is missin
     ],
     { env: { PATH: bin, HOME: await fakeHome(), TMPDIR: tmp }, encoding: "utf8" },
   );
+  const pins = JSON.parse(
+    await readFile(new URL("./rehearsal-pins.json", import.meta.url), "utf8"),
+  );
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /^The cli-experience rehearsal cannot start; nothing was created:\n/);
-  assert.match(result.stderr, /Bun 1\.4\.4 is required; bun --version prints 0\.0\.1\./);
+  assert.ok(
+    result.stderr.includes(`Bun ${pins.bun} is required; bun --version prints 0.0.1.`),
+    result.stderr,
+  );
   assert.deepEqual(await readdir(tmp), ["report.md"], "only the requested report was written");
   assert.match(
     await readFile(report, "utf8"),
