@@ -1,5 +1,0 @@
----
-"create-project-calavera": patch
----
-
-A rollback of an interrupted artifact transaction no longer deletes edits you made since the transaction stopped. The transaction journal now records a fingerprint of what each step writes, and before the rollback replaces or removes anything, it compares each file and folder it would replace or remove with that fingerprint. When one changed, such as an edited `.gitignore`, a file added to a newly installed skill folder, or a file made executable there, the rollback changes nothing, names each changed path, and tells you to move it out of the project to keep the edits, or delete it to discard them, then run the command again. The fingerprint covers each entry's path and kind, the permissions of each file and folder, each file's bytes, and each link's target, so a permission change alone, such as making a file executable, counts as an edit too. A journal written by an earlier Calavera version records no fingerprint, so the rollback stops the same way before it replaces or removes any path that exists (#1174).
