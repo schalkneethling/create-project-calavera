@@ -2646,11 +2646,11 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
 
     const doctorBeforeApply = JSON.parse(
       (
-        await execFileAsync(
-          process.execPath,
-          [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-          { env: { ...process.env } },
-        )
+        await execFileAsync(process.execPath, [
+          fileURLToPath(new URL("../src/index.js", import.meta.url)),
+          "doctor",
+          "--json",
+        ])
       ).stdout,
     );
     assert.equal(
@@ -2681,11 +2681,11 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
 
     const doctorAfterApply = JSON.parse(
       (
-        await execFileAsync(
-          process.execPath,
-          [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-          { env: { ...process.env } },
-        )
+        await execFileAsync(process.execPath, [
+          fileURLToPath(new URL("../src/index.js", import.meta.url)),
+          "doctor",
+          "--json",
+        ])
       ).stdout,
     );
     assert.equal(
@@ -2711,11 +2711,12 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
     );
     const cleanResult = JSON.parse(
       (
-        await execFileAsync(
-          process.execPath,
-          [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-          { env: { ...process.env } },
-        )
+        await execFileAsync(process.execPath, [
+          fileURLToPath(new URL("../src/index.js", import.meta.url)),
+          "clean",
+          "--yes",
+          "--json",
+        ])
       ).stdout,
     );
     assert.equal(
@@ -3076,11 +3077,11 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
       [".htmlvalidate.json", ".htmlvalidateignore", "scripts/lint-html.mjs"],
     );
 
-    const { stdout: doctorStdout } = await execFileAsync(
-      process.execPath,
-      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout: doctorStdout } = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("../src/index.js", import.meta.url)),
+      "doctor",
+      "--json",
+    ]);
     assert.equal(
       JSON.parse(doctorStdout).issues.some(
         ({ message }) => message.includes("htmlvalidate") || message.includes("lint-html"),
@@ -3105,11 +3106,12 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
       "calavera.config.json",
       `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
     );
-    const { stdout: cleanStdout } = await execFileAsync(
-      process.execPath,
-      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout: cleanStdout } = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("../src/index.js", import.meta.url)),
+      "clean",
+      "--yes",
+      "--json",
+    ]);
     assert.deepEqual(
       JSON.parse(cleanStdout).changes.map(({ type, path }) => ({ type, path })),
       [
@@ -3238,11 +3240,11 @@ APP_ENV=development
     assert.equal((await readFile(".gitignore", "utf8")).match(/^# Varlock$/gm)?.length, 1);
 
     await rm(".env.schema");
-    const { stdout: doctorStdout } = await execFileAsync(
-      process.execPath,
-      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout: doctorStdout } = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("../src/index.js", import.meta.url)),
+      "doctor",
+      "--json",
+    ]);
     assert.equal(
       JSON.parse(doctorStdout).issues.some(
         ({ message }) => message.includes("Missing Varlock schema") && message.includes("apply"),
@@ -3255,11 +3257,12 @@ APP_ENV=development
       "calavera.config.json",
       `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
     );
-    const { stdout: cleanStdout } = await execFileAsync(
-      process.execPath,
-      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout: cleanStdout } = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("../src/index.js", import.meta.url)),
+      "clean",
+      "--yes",
+      "--json",
+    ]);
     assert.equal(JSON.parse(cleanStdout).changes.length, 0);
     assert.equal(await readFile(".env.schema", "utf8"), `${expectedSchema}CUSTOM_TOKEN=\n`);
     assert.equal(await readFile(".gitignore", "utf8"), gitignore);
@@ -3280,11 +3283,11 @@ test("doctor does not expect the removed run-if-files helper", async (t) => {
       `${JSON.stringify(buildRecipe("default", ["editorconfig"], "npm"), null, 2)}\n`,
     );
 
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout } = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("../src/index.js", import.meta.url)),
+      "doctor",
+      "--json",
+    ]);
     const result = JSON.parse(stdout);
 
     assert.equal(
@@ -3326,11 +3329,12 @@ test("clean treats a matching managed run-if-files helper as stale", async (t) =
       )}\n`,
     );
 
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--dry-run", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout } = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("../src/index.js", import.meta.url)),
+      "clean",
+      "--dry-run",
+      "--json",
+    ]);
     const result = JSON.parse(stdout);
 
     assert.equal(
@@ -3352,7 +3356,6 @@ test("clean human output names each planned and completed delete and each locall
   const originalEditedContents = "{}\n";
   const localEditedContents = '{\n  "entry": ["src/index.js"]\n}\n';
   const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
-  const environment = { ...process.env };
 
   try {
     process.chdir(projectDirectory);
@@ -3382,11 +3385,13 @@ test("clean human output names each planned and completed delete and each locall
       )}\n`,
     );
 
-    const { stdout: skipOnlyJsonStdout } = await execFileAsync(
-      process.execPath,
-      [cliPath, "clean", "--dry-run", "--yes", "--json"],
-      { env: environment },
-    );
+    const { stdout: skipOnlyJsonStdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      "clean",
+      "--dry-run",
+      "--yes",
+      "--json",
+    ]);
     const skipOnlyJsonResult = JSON.parse(skipOnlyJsonStdout);
 
     assert.equal(Object.hasOwn(skipOnlyJsonResult, "dryRun"), false);
@@ -3395,11 +3400,12 @@ test("clean human output names each planned and completed delete and each locall
       [["skip", editedPath, ["local-edits"]]],
     );
 
-    const { stdout: skipOnlyDryRunStdout } = await execFileAsync(
-      process.execPath,
-      [cliPath, "clean", "--dry-run", "--yes"],
-      { env: environment },
-    );
+    const { stdout: skipOnlyDryRunStdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      "clean",
+      "--dry-run",
+      "--yes",
+    ]);
 
     // #331: the kept file is named once, under Files, with its reason; the sentence the JSON
     // message adds about kept items is left out.
@@ -3420,11 +3426,12 @@ test("clean human output names each planned and completed delete and each locall
       `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
     );
 
-    const { stdout: dryRunStdout } = await execFileAsync(
-      process.execPath,
-      [cliPath, "clean", "--dry-run", "--yes"],
-      { env: environment },
-    );
+    const { stdout: dryRunStdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      "clean",
+      "--dry-run",
+      "--yes",
+    ]);
 
     assert.match(
       dryRunStdout,
@@ -3433,11 +3440,11 @@ test("clean human output names each planned and completed delete and each locall
     assert.equal(await readFile(safePath, "utf8"), safeContents);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
 
-    const { stdout: cleanStdout } = await execFileAsync(
-      process.execPath,
-      [cliPath, "clean", "--yes"],
-      { env: environment },
-    );
+    const { stdout: cleanStdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      "clean",
+      "--yes",
+    ]);
 
     assert.match(
       cleanStdout,
@@ -3480,11 +3487,12 @@ test("clean says why it keeps a managed file whose record has no hash, and what 
       )}\n`,
     );
 
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      [cliPath, "clean", "--dry-run", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      "clean",
+      "--dry-run",
+      "--json",
+    ]);
     const result = JSON.parse(stdout);
 
     assert.deepEqual(
@@ -3761,11 +3769,12 @@ test("hook apply plans both outputs and protects an unowned settings sidecar", a
       "calavera.config.json",
       `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
     );
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-      { env: { ...process.env } },
-    );
+    const { stdout } = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("../src/index.js", import.meta.url)),
+      "clean",
+      "--yes",
+      "--json",
+    ]);
     const cleanResult = JSON.parse(stdout);
     assert.deepEqual(
       cleanResult.changes.filter(({ category }) => category === "ai").map(({ path }) => path),

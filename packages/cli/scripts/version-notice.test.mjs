@@ -326,15 +326,22 @@ test("every test entry point that runs the CLI loads the setup module that turns
   const nodeArgs = stryker.tap.nodeArgs;
   assert.equal(nodeArgs[nodeArgs.indexOf("--import") + 1], `./packages/cli${setup.slice(1)}`);
 
-  // The module itself sets the switch.
-  const before = process.env.CALAVERA_NO_VERSION_CHECK;
+  // The module itself sets the switch, and turns color off even when the shell forces it (#1345).
+  const names = ["CALAVERA_NO_VERSION_CHECK", "NO_COLOR", "FORCE_COLOR"];
+  const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   delete process.env.CALAVERA_NO_VERSION_CHECK;
+  delete process.env.NO_COLOR;
+  process.env.FORCE_COLOR = "1";
   try {
     await import(`../scripts/test-environment.mjs?${Date.now()}`);
     assert.equal(isVersionCheckDisabled(process.env), true);
+    assert.equal(process.env.NO_COLOR, "1");
+    assert.equal(process.env.FORCE_COLOR, "0");
   } finally {
-    if (before === undefined) delete process.env.CALAVERA_NO_VERSION_CHECK;
-    else process.env.CALAVERA_NO_VERSION_CHECK = before;
+    for (const name of names) {
+      if (before[name] === undefined) delete process.env[name];
+      else process.env[name] = before[name];
+    }
   }
 });
 
