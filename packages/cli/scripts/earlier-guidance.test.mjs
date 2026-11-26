@@ -79,9 +79,12 @@ test("Given an .agents/calavera/mcp.md that an earlier release wrote, when --ini
     const current = await currentText(packageManager);
     for (const { id, releases } of epochs.mcp) {
       const earlier = await mcpText(id, packageManager, releases[0]);
-      // On the Version Packages branch, the newest template pinned to its first release is the
-      // text this checkout writes, so there is no earlier text to replace (#1343).
-      if (earlier === current.mcp) continue;
+      // When package.json is at the newest template's first release, that template pinned to it
+      // is the text this checkout writes, so there is no earlier text to replace (#1343).
+      if (earlier === current.mcp) {
+        assert.equal(id, epochs.mcp.at(-1)?.id, `${packageManager}: only the newest is current`);
+        continue;
+      }
       await inTemporaryProject(packageManager, async (directory) => {
         await writeFiles(directory, { [MCP_FILE]: earlier });
 
