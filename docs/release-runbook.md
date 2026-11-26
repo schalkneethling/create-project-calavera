@@ -21,7 +21,7 @@ release.
   which synchronizes its own environment from the locked dependencies automatically.
 - For the cli-experience rehearsal gate in step 4: network access, Node.js and Bun at exactly the
   versions in [`scripts/rehearsal-pins.json`](../scripts/rehearsal-pins.json) (Node.js 26.13.1 and Bun
-  1.4.4 at the time of writing), and `git` and `tar` in a standard system directory or next to Node.js
+  1.4.5 at the time of writing), and `git` and `tar` in a standard system directory or next to Node.js
   or Bun. The gate uses the Node.js that runs `pnpm release:prepare`, so run the whole release
   command with the pinned Node.js. The rehearsal gives Bun an empty HOME, so put the Bun binary itself
   on `PATH`, not a version-manager shim that needs your HOME. The rehearsal installs its own

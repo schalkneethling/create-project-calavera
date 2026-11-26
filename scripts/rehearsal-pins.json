@@ -1,7 +1,7 @@
 {
   "$comment": "Versions the pinned cli-experience rehearsal uses (#918). The rehearsal workflow reads node and bun from here; the script installs corepack, pnpm, yarn, and vitePlus at these versions for each run.",
   "node": "26.13.1",
-  "bun": "1.4.4",
+  "bun": "1.4.5",
   "corepack": "0.36.0",
   "pnpm": "11.28.10",
   "yarn": "4.18.1",
