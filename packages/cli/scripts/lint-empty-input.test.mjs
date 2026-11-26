@@ -115,9 +115,9 @@ test("doctor reports a missing HTML Validate wrapper", async () => {
 
     // A managed file apply wrote and someone deleted is an error, so doctor exits 1 (ADR-0020,
     // owner decision 4); its JSON result is on standard output either way.
-    const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
-      env: { ...process.env, NO_COLOR: "1" },
-    }).catch((/** @type {{ stdout: string }} */ error) => error);
+    const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"]).catch(
+      (/** @type {{ stdout: string }} */ error) => error,
+    );
 
     assert.ok(
       JSON.parse(stdout).issues.some(
@@ -181,9 +181,7 @@ test("a second apply and dry run keep both settings and report nothing to change
     assert.equal(firstScripts["lint:styles"], lintStyles);
 
     // The CLI reads the recipe that the first apply wrote to calavera.config.json.
-    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"], {
-      env: { ...process.env, NO_COLOR: "1" },
-    });
+    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"]);
 
     assert.match(stdout, /Nothing to change: the project already matches this recipe\./);
     assert.doesNotMatch(stdout, /Would (write|update|change|add)/);
@@ -214,9 +212,7 @@ test("a dry run on a project an earlier release applied shows each changed lint 
         "calavera.config.json",
         `${JSON.stringify(recipeFor({ quality: false }), null, 2)}\n`,
       );
-      const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"], {
-        env: { ...process.env, NO_COLOR: "1" },
-      });
+      const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"]);
       const lines = stdout.split("\n");
 
       for (const expected of [
@@ -247,9 +243,7 @@ const htmlOnlyQualityOmission =
 
 /** @param {string[]} args */
 async function runCli(args) {
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], {
-    env: { ...process.env, NO_COLOR: "1" },
-  });
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args]);
   return stdout.split("\n");
 }
 
@@ -478,7 +472,7 @@ async function runQuality(directory) {
   try {
     const { stdout, stderr } = await execFileAsync("npm", ["run", "quality"], {
       cwd: directory,
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", npm_config_update_notifier: "false" },
+      env: { ...process.env, npm_config_update_notifier: "false" },
     });
     return { code: 0, output: `${stdout}${stderr}` };
   } catch (error) {
@@ -552,7 +546,6 @@ async function runCommand(command, args, directory) {
   try {
     const { stdout, stderr } = await execFileAsync(command, args, {
       cwd: directory,
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
     });
     return { code: 0, output: `${stdout}${stderr}` };
   } catch (error) {

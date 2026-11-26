@@ -125,7 +125,6 @@ function runCli(cwd, args, registry) {
           cwd,
           env: {
             ...process.env,
-            NO_COLOR: "1",
             npm_config_registry: registry,
             "npm_config_@schalkneethling:registry": registry,
           },

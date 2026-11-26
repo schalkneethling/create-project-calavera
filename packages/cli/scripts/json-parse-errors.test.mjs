@@ -58,7 +58,7 @@ function runCli(cwd, args) {
     execFile(
       process.execPath,
       [cliPath, ...args],
-      { cwd, env: { ...process.env, NO_COLOR: "1", CALAVERA_DEBUG: "1" } },
+      { cwd, env: { ...process.env, CALAVERA_DEBUG: "1" } },
       (error, stdout, stderr) => {
         resolve({
           code: error ? (typeof error.code === "number" ? error.code : null) : 0,

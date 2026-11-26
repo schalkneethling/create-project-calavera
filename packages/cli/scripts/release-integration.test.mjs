@@ -277,7 +277,6 @@ test("a first apply of a Composer-built recipe with artifacts installs them thro
   const runCli = (args) =>
     execFileAsync(process.execPath, ["--import", packedRegistryPreload, cliPath, ...args], {
       cwd: projectDirectory,
-      env: { ...process.env, NO_COLOR: "1" },
     });
 
   const preview = await runCli(["apply", "--dry-run"]);
@@ -366,11 +365,11 @@ test("init --apply lists the artifacts it would lock in its approval summary", a
       "--ai-artifact",
       id,
     ],
-    { cwd: projectDirectory, env: { ...process.env, NO_COLOR: "1" } },
+    { cwd: projectDirectory },
   );
 
-  // Compare the text without the Clack frame around the recipe summary. A FORCE_COLOR in the
-  // caller's environment overrides NO_COLOR, so strip escape sequences too.
+  // Compare the text without the Clack frame around the recipe summary. test-environment.mjs turns
+  // color off; stripping escape sequences keeps this comparison plain if a run turns it back on.
   const summary = stripVTControlCharacters(stdout)
     .replace(/[│├╮╯─◇]/g, " ")
     .replace(/\s+/g, " ");

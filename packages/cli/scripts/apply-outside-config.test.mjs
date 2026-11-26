@@ -101,7 +101,7 @@ function runCli(cwd, args) {
     execFile(
       process.execPath,
       [cliPath, ...args],
-      { cwd, timeout: CLI_TIMEOUT_MS, env: { ...process.env, NO_COLOR: "1" } },
+      { cwd, timeout: CLI_TIMEOUT_MS },
       (error, stdout, stderr) => {
         resolvePromise({
           code: error ? (typeof error.code === "number" ? error.code : 1) : 0,

@@ -85,7 +85,6 @@ async function inProject(callback) {
 function runCli(cwd, args) {
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd,
-    env: { ...process.env, NO_COLOR: "1" },
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
     timeout: 120_000,

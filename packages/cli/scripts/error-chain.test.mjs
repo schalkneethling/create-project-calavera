@@ -685,18 +685,13 @@ test("a registered MCP tool that throws answers with an error result, also when 
  */
 function runCli(args, cwd) {
   return new Promise((resolvePromise) => {
-    execFile(
-      process.execPath,
-      [cliPath, ...args],
-      { cwd, env: { ...process.env, NO_COLOR: "1" } },
-      (error, stdout, stderr) => {
-        resolvePromise({
-          code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
+    execFile(process.execPath, [cliPath, ...args], { cwd }, (error, stdout, stderr) => {
+      resolvePromise({
+        code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+        stdout,
+        stderr,
+      });
+    });
   });
 }
 

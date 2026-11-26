@@ -177,7 +177,6 @@ test("the block leaves with the cache, and the dry run says why", async () => {
     const run = spawnSync(process.execPath, [cli, "apply", "--dry-run", "--yes", "--no-install"], {
       cwd: directory,
       encoding: "utf8",
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
     });
     assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
     assert.match(
@@ -457,7 +456,6 @@ test("the text output of an artifacts command shows the cache block it adds and 
       const ran = spawnSync(process.execPath, [cli, "artifacts", "install", ...args], {
         cwd: directory,
         encoding: "utf8",
-        env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
       });
       assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);
       return `${ran.stdout}${ran.stderr}`;
@@ -499,7 +497,6 @@ test("the text output of artifacts install --dry-run shows a replaced cache bloc
     const ran = spawnSync(process.execPath, [cli, "artifacts", "install", "--dry-run"], {
       cwd: directory,
       encoding: "utf8",
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
     });
 
     assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);

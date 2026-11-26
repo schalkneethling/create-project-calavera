@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-const PRELOAD = fileURLToPath(new URL("./no-version-check.mjs", import.meta.url));
+const PRELOAD = fileURLToPath(new URL("./test-environment.mjs", import.meta.url));
 // The children take seconds; the bound is generous for a loaded machine.
 export const WAIT_MS = 120_000;
 

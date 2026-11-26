@@ -772,7 +772,7 @@ async function cliDryRun(directory, integrations, extraArguments = []) {
       "--no-install",
       ...extraArguments,
     ],
-    { cwd: directory, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } },
+    { cwd: directory, encoding: "utf8" },
   );
   assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
   return `${run.stdout}${run.stderr}`;
@@ -946,7 +946,6 @@ async function lintReportProject(integrations) {
     const run = spawnSync(process.execPath, [join("scripts", "lint-html.mjs"), "**/*.html"], {
       cwd: directory,
       encoding: "utf8",
-      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
     });
     result = { code: run.status, output: `${run.stdout}${run.stderr}` };
   });

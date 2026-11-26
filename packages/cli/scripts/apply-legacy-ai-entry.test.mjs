@@ -94,7 +94,6 @@ async function inWiredProjectWithLegacyEntry(callback) {
 function runCli(args) {
   return spawnSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
 }
 

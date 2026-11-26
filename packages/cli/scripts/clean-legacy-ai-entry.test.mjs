@@ -66,7 +66,6 @@ async function writeRecipe(recipe) {
 function runClean(args) {
   const result = spawnSync(process.execPath, [cli, "clean", "--json", ...args], {
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
   assert.equal(
     result.status,

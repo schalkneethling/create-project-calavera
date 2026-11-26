@@ -38,7 +38,7 @@ async function runDoctorJson(cwd, expectedCode) {
   const { stdout, stderr, code } = await execFileAsync(
     process.execPath,
     [cliPath, "doctor", "--json"],
-    { cwd, env: { ...process.env, NO_COLOR: "1" } },
+    { cwd },
   ).then(
     (result) => ({ ...result, code: 0 }),
     (error) => error,

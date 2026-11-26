@@ -441,7 +441,6 @@ test("vp create library: doctor reports a missing stryker.config.json", async ()
       JSON.parse(
         spawnSync(process.execPath, [cliPath, "doctor", "--json"], {
           encoding: "utf8",
-          env: { ...process.env, NO_COLOR: "1" },
         }).stdout,
       );
 

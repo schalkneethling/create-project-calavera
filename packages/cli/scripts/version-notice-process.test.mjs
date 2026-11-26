@@ -82,7 +82,9 @@ function runCli(cwd, args, registry, env = {}) {
     ...env,
   };
   // The suite's setup module sets the switch, and a developer's shell may set either variable.
-  for (const name of ["CALAVERA_NO_VERSION_CHECK", "CALAVERA_DEBUG"]) {
+  // The setup module also turns color off; removing those two lets the notice tests show that
+  // the CLI leaves color out because standard error is not a terminal (#1345).
+  for (const name of ["CALAVERA_NO_VERSION_CHECK", "CALAVERA_DEBUG", "NO_COLOR", "FORCE_COLOR"]) {
     if (!(name in env)) delete childEnv[name];
   }
   const started = performance.now();

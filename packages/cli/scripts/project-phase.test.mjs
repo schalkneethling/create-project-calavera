@@ -90,7 +90,6 @@ async function writeJsonFile(path, value) {
 function runCli(args) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
   assert.equal(result.status, 0, `${args.join(" ")} exited ${result.status}\n${result.stderr}`);
 }

@@ -22,7 +22,6 @@ test("init --yes without --profile and without a terminal writes the default pro
   // Standard input is /dev/null, not a terminal, as in CI or an agent's shell.
   const result = spawnSync(process.execPath, [cliPath, "init", "--yes"], {
     cwd: fixture.root,
-    env: { ...process.env, NO_COLOR: "1" },
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
     timeout: 60_000,

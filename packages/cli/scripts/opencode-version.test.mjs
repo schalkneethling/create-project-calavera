@@ -255,7 +255,7 @@ test(
   "the test preload turns the check off, so an ordinary --init test never starts opencode",
   posix,
   async () => {
-    assert.equal(process.env[SWITCH], "1", "scripts/no-version-check.mjs sets the switch");
+    assert.equal(process.env[SWITCH], "1", "scripts/test-environment.mjs sets the switch");
     await withFolders(async ({ project, bin }) => {
       const marker = join(bin, "ran");
       await stub(
@@ -630,7 +630,7 @@ function runInit(cwd, bin, extra = []) {
     execFile(
       process.execPath,
       [binPath, "--init", "--yes", "--mcp-harness", "opencode", ...extra],
-      { cwd, env: { ...withoutSwitch(process.env), PATH: bin, NO_COLOR: "1" } },
+      { cwd, env: { ...withoutSwitch(process.env), PATH: bin } },
       (error, stdout, stderr) => {
         resolvePromise({
           code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
@@ -681,7 +681,7 @@ test(
 async function withPath(bin, callback) {
   process.env.PATH = bin;
   // These tests exercise the check, so they opt in: the test preload turns it off for every
-  // other test (scripts/no-version-check.mjs).
+  // other test (scripts/test-environment.mjs).
   const switchValue = process.env[SWITCH];
   delete process.env[SWITCH];
   try {

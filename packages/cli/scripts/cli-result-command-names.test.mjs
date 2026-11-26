@@ -33,7 +33,7 @@ function runCli(cwd, args) {
     const child = execFile(
       process.execPath,
       [cliPath, ...args],
-      { cwd, env: { ...process.env, NO_COLOR: "1", CI: "1" } },
+      { cwd, env: { ...process.env, CI: "1" } },
       (error, stdout, stderr) => {
         resolve({
           code: error ? (typeof error.code === "number" ? error.code : null) : 0,
