@@ -38,7 +38,7 @@ async function runCli(cwd, args) {
     const child = execFile(
       process.execPath,
       [cliPath, ...args],
-      { cwd, env: { ...process.env, NO_COLOR: "1", CI: "1", CALAVERA_TEST_TOKEN: ENV_SECRET } },
+      { cwd, env: { ...process.env, CI: "1", CALAVERA_TEST_TOKEN: ENV_SECRET } },
       (error, stdout, stderr) => {
         resolve({
           code: error ? (typeof error.code === "number" ? error.code : null) : 0,

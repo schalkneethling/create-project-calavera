@@ -234,7 +234,6 @@ async function doctorReport(cwd) {
   const { status, stdout, stderr } = spawnSync(process.execPath, [cliPath, "doctor", "--json"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
   assert.ok(status === 0 || status === 1, `doctor exited ${status}\n${stderr}`);
   const report = JSON.parse(stdout);

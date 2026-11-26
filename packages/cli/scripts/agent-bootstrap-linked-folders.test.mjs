@@ -43,18 +43,13 @@ function refusal(/** @type {string} */ link) {
  */
 function runCli(cwd, args) {
   return new Promise((resolvePromise) => {
-    execFile(
-      process.execPath,
-      [binPath, ...args],
-      { cwd, env: { ...process.env, NO_COLOR: "1" } },
-      (error, stdout, stderr) => {
-        resolvePromise({
-          code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
+    execFile(process.execPath, [binPath, ...args], { cwd }, (error, stdout, stderr) => {
+      resolvePromise({
+        code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+        stdout,
+        stderr,
+      });
+    });
   });
 }
 

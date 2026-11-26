@@ -211,9 +211,7 @@ test("the README's WebMCP list names every tool the Composer registers, and no o
 });
 
 test("--help lists every tool the MCP server registers, and no others", async () => {
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, "--help"], {
-    env: { ...process.env, NO_COLOR: "1" },
-  });
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "--help"]);
   const documented = toolNamesIn(listAfterMarker(stdout, HELP_MARKER, "--help output"));
 
   assert.deepEqual(documented, await registeredToolNames());

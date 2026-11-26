@@ -28,18 +28,13 @@ const emptyRecipe = json({
  */
 function runDoctor(cwd, args) {
   return new Promise((resolve) => {
-    execFile(
-      process.execPath,
-      [cliPath, "doctor", ...args],
-      { cwd, env: { ...process.env, NO_COLOR: "1" } },
-      (error, stdout, stderr) => {
-        resolve({
-          code: error ? (typeof error.code === "number" ? error.code : null) : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
+    execFile(process.execPath, [cliPath, "doctor", ...args], { cwd }, (error, stdout, stderr) => {
+      resolve({
+        code: error ? (typeof error.code === "number" ? error.code : null) : 0,
+        stdout,
+        stderr,
+      });
+    });
   });
 }
 

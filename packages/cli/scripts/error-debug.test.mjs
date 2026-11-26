@@ -238,7 +238,7 @@ test("an MCP tool error carries each stack only with CALAVERA_DEBUG", () => {
  * @returns {Promise<{ code: number, stderr: string }>}
  */
 function runCli(args, cwd, extraEnv) {
-  const env = { ...process.env, NO_COLOR: "1", ...extraEnv };
+  const env = { ...process.env, ...extraEnv };
   if (!("CALAVERA_DEBUG" in extraEnv)) delete env.CALAVERA_DEBUG;
 
   return new Promise((resolvePromise) => {

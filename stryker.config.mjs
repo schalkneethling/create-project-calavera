@@ -32,7 +32,7 @@ const config = {
     // (ADR-0019 Decision 7), so no mutant run asks a registry for `latest`.
     nodeArgs: [
       "--import",
-      "./packages/cli/scripts/no-version-check.mjs",
+      "./packages/cli/scripts/test-environment.mjs",
       "--test-reporter=tap",
       "--test-skip-pattern=redactSecrets takes linear time",
       "-r",

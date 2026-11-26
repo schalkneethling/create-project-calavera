@@ -119,7 +119,6 @@ test("Given a Vite+ project, when agent-init and clean rewrite .calavera/state.j
   const clean = spawnSync(process.execPath, [cli, "clean", "--yes", "--json"], {
     cwd: project.root,
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
   assert.equal(clean.status, 0, clean.stderr);
   assert.ok(
@@ -335,7 +334,6 @@ test("Given a Vite+ project inside a folder whose .editorconfig sets four-space 
     spawnSync(process.execPath, [cli, "clean", "--yes", "--json", ...args], {
       cwd: root,
       encoding: "utf8",
-      env: { ...process.env, NO_COLOR: "1" },
     });
   const stop =
     /Removing Calavera's \.editorconfig would change how vp fmt formats \.calavera\/state\.json: indent_size is 2 now and 4 after clean/;
@@ -373,7 +371,6 @@ test("Given a Vite+ project with no other .editorconfig, when clean removes Cala
   const clean = spawnSync(process.execPath, [cli, "clean", "--yes", "--json"], {
     cwd: project.root,
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
   assert.equal(clean.status, 0, clean.stderr);
   assert.ok(

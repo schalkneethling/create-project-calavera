@@ -73,7 +73,6 @@ function runWrapper(directory, args, input = "") {
     cwd: directory,
     encoding: "utf8",
     input,
-    env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
   });
   return { code: result.status, output: `${result.stdout}${result.stderr}` };
 }

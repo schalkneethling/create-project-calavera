@@ -26,18 +26,13 @@ const SECRET = "FAKE_SECRET_1218";
  */
 function runCli(cwd, args) {
   return new Promise((resolve) => {
-    execFile(
-      process.execPath,
-      [cliPath, ...args],
-      { cwd, env: { ...process.env, NO_COLOR: "1" } },
-      (error, stdout, stderr) => {
-        resolve({
-          code: error ? (typeof error.code === "number" ? error.code : null) : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
+    execFile(process.execPath, [cliPath, ...args], { cwd }, (error, stdout, stderr) => {
+      resolve({
+        code: error ? (typeof error.code === "number" ? error.code : null) : 0,
+        stdout,
+        stderr,
+      });
+    });
   });
 }
 

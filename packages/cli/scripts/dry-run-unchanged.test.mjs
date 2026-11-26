@@ -98,9 +98,7 @@ test("the CLI dry run names each unchanged file and says there is nothing to cha
   await inProject(async () => {
     await applyRecipeObject(recipe, applyOptions);
 
-    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"], {
-      env: { ...process.env, NO_COLOR: "1" },
-    });
+    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"]);
 
     assert.match(stdout, /Unchanged \.editorconfig/);
     assert.match(stdout, /Unchanged package\.json/);

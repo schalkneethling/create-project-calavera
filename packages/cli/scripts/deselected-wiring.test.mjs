@@ -165,7 +165,6 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
     const before = await snapshot();
     const output = execFileSync(process.execPath, [cli, "apply", "--dry-run", "--yes"], {
       encoding: "utf8",
-      env: { ...process.env, NO_COLOR: "1" },
     });
 
     // #617: the artifact is named once, and each block removal sits under it.
@@ -473,7 +472,6 @@ async function writeConfig(recipe) {
 function runClean(args) {
   return spawnSync(process.execPath, [cli, "clean", ...args], {
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
 }
 

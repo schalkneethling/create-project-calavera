@@ -26,7 +26,6 @@ const registry = () => stubRegistry(new Map([[droppedId, "0.1.0"]]));
 function runCli(args) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
   assert.equal(result.status, 0, `${args.join(" ")} exited ${result.status}\n${result.stderr}`);
   return result.stdout;

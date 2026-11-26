@@ -549,9 +549,7 @@ test("clean keeps the quality record in the state file it rewrites", async () =>
     const before = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     assert.ok(before.files.includes(".editorconfig"), JSON.stringify(before.files));
 
-    await execFileAsync(process.execPath, [cliPath, "clean", "--yes", "--json"], {
-      env: { ...process.env, NO_COLOR: "1" },
-    });
+    await execFileAsync(process.execPath, [cliPath, "clean", "--yes", "--json"]);
 
     const after = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     assert.equal(after.files.includes(".editorconfig"), false, JSON.stringify(after.files));
@@ -759,7 +757,6 @@ test("the CLI dry run names the vp run -r test step it leaves out of quality", a
   await writeVitePlusFormatter(fixture.root);
   const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"], {
     cwd: fixture.root,
-    env: { ...process.env, NO_COLOR: "1" },
   });
 
   assert.match(
@@ -893,9 +890,7 @@ test("a project applied before the rename: the dry run shows lint and lint:fix r
       [],
     );
 
-    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"], {
-      env: { ...process.env, NO_COLOR: "1" },
-    });
+    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"]);
     assert.match(stdout, /Would rename script lint to lint:styles/);
     assert.match(stdout, /Would rename script lint:fix to lint:styles:fix/);
     assert.equal(
@@ -946,9 +941,7 @@ test("a project applied before the rename whose lint the user changed keeps it a
       ],
     );
 
-    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"], {
-      env: { ...process.env, NO_COLOR: "1" },
-    });
+    const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"]);
     assert.doesNotMatch(stdout, /Would rename script lint to/);
     assert.match(stdout, /Inspection warning: package\.json defines "lint"/);
 

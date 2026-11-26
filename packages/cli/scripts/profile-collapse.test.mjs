@@ -197,7 +197,6 @@ test("the CLI apply path rejects a config naming a removed profile", async () =>
       () =>
         execFileAsync(process.execPath, [binPath, "apply", "--dry-run"], {
           cwd: fixture.root,
-          env: { ...process.env, NO_COLOR: "1" },
         }),
       (error) => {
         assert.match(String(error.stderr), removedProfileMessage(removedId));
@@ -309,7 +308,6 @@ test("the CLI apply dry run prints the Vite+ detection lines", async () => {
 
   const { stdout } = await execFileAsync(process.execPath, [binPath, "apply", "--dry-run"], {
     cwd: fixture.root,
-    env: { ...process.env, NO_COLOR: "1" },
   });
 
   for (const line of managedLines) {

@@ -83,7 +83,7 @@ function packageJSONChange(changes) {
 /** @param {string[]} cliArgs */
 async function runCli(cliArgs) {
   const { stdout } = await execFileAsync(process.execPath, [cliPath, ...cliArgs], {
-    env: { ...process.env, NO_COLOR: "1", [secretName]: secretValue },
+    env: { ...process.env, [secretName]: secretValue },
   });
   return stdout;
 }

@@ -2649,7 +2649,7 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
         await execFileAsync(
           process.execPath,
           [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-          { env: { ...process.env, NO_COLOR: "1" } },
+          { env: { ...process.env } },
         )
       ).stdout,
     );
@@ -2684,7 +2684,7 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
         await execFileAsync(
           process.execPath,
           [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-          { env: { ...process.env, NO_COLOR: "1" } },
+          { env: { ...process.env } },
         )
       ).stdout,
     );
@@ -2714,7 +2714,7 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
         await execFileAsync(
           process.execPath,
           [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-          { env: { ...process.env, NO_COLOR: "1" } },
+          { env: { ...process.env } },
         )
       ).stdout,
     );
@@ -2958,7 +2958,6 @@ test("Knip ignores unused files under .agents and .calavera but still reports ot
   const runKnip = () =>
     execFileAsync(process.execPath, [knipBinary, "--no-progress"], {
       cwd: projectDirectory,
-      env: { ...process.env, NO_COLOR: "1" },
     }).then(
       ({ stdout }) => stdout,
       (error) => error.stdout,
@@ -3080,7 +3079,7 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
     const { stdout: doctorStdout } = await execFileAsync(
       process.execPath,
       [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     assert.equal(
       JSON.parse(doctorStdout).issues.some(
@@ -3109,7 +3108,7 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
     const { stdout: cleanStdout } = await execFileAsync(
       process.execPath,
       [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     assert.deepEqual(
       JSON.parse(cleanStdout).changes.map(({ type, path }) => ({ type, path })),
@@ -3242,7 +3241,7 @@ APP_ENV=development
     const { stdout: doctorStdout } = await execFileAsync(
       process.execPath,
       [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     assert.equal(
       JSON.parse(doctorStdout).issues.some(
@@ -3259,7 +3258,7 @@ APP_ENV=development
     const { stdout: cleanStdout } = await execFileAsync(
       process.execPath,
       [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     assert.equal(JSON.parse(cleanStdout).changes.length, 0);
     assert.equal(await readFile(".env.schema", "utf8"), `${expectedSchema}CUSTOM_TOKEN=\n`);
@@ -3284,7 +3283,7 @@ test("doctor does not expect the removed run-if-files helper", async (t) => {
     const { stdout } = await execFileAsync(
       process.execPath,
       [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     const result = JSON.parse(stdout);
 
@@ -3330,7 +3329,7 @@ test("clean treats a matching managed run-if-files helper as stale", async (t) =
     const { stdout } = await execFileAsync(
       process.execPath,
       [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--dry-run", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     const result = JSON.parse(stdout);
 
@@ -3353,7 +3352,7 @@ test("clean human output names each planned and completed delete and each locall
   const originalEditedContents = "{}\n";
   const localEditedContents = '{\n  "entry": ["src/index.js"]\n}\n';
   const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
-  const environment = { ...process.env, NO_COLOR: "1" };
+  const environment = { ...process.env };
 
   try {
     process.chdir(projectDirectory);
@@ -3484,7 +3483,7 @@ test("clean says why it keeps a managed file whose record has no hash, and what 
     const { stdout } = await execFileAsync(
       process.execPath,
       [cliPath, "clean", "--dry-run", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     const result = JSON.parse(stdout);
 
@@ -3530,9 +3529,7 @@ test("apply dry-run human output distinguishes owned writes and omitted scripts"
       )}\n`,
     );
 
-    const { stdout } = await execFileAsync(process.execPath, [binPath, "apply", "--dry-run"], {
-      env: { ...process.env, NO_COLOR: "1" },
-    });
+    const { stdout } = await execFileAsync(process.execPath, [binPath, "apply", "--dry-run"]);
 
     assert.match(stdout, /Would update package\.json/);
     assert.match(stdout, /Would write and own \.editorconfig/);
@@ -3767,7 +3764,7 @@ test("hook apply plans both outputs and protects an unowned settings sidecar", a
     const { stdout } = await execFileAsync(
       process.execPath,
       [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
-      { env: { ...process.env, NO_COLOR: "1" } },
+      { env: { ...process.env } },
     );
     const cleanResult = JSON.parse(stdout);
     assert.deepEqual(

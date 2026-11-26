@@ -265,7 +265,6 @@ function cliEnvironment(workspace, env) {
   }
   const childEnv = {
     ...inherited,
-    NO_COLOR: "1",
     PATH: stubPath(workspace),
     STUB_LOG: workspace.log,
     ...env,

@@ -99,7 +99,6 @@ test("init --ai-artifact id@target with an unsupported target fails and writes n
     [cliPath, "init", "--yes", "--profile", "minimal", "--ai-artifact", `${HOOK}@${UNSUPPORTED}`],
     {
       cwd: fixture.root,
-      env: { ...process.env, NO_COLOR: "1" },
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
       timeout: 60_000,

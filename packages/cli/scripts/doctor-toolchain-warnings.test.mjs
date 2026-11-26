@@ -72,7 +72,6 @@ function recipe(integrations) {
 async function runDoctor(cwd, args = []) {
   return execFileAsync(process.execPath, [cliPath, "doctor", ...args], {
     cwd,
-    env: { ...process.env, NO_COLOR: "1" },
   });
 }
 

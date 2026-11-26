@@ -92,16 +92,12 @@ const issuesOf = (result, check) =>
 function runCli(cwd, args) {
   return /** @type {Promise<{ code: number | null, stdout: string, stderr: string }>} */ (
     new Promise((resolve) => {
-      execFile(
-        process.execPath,
-        [cli, ...args],
-        { cwd, env: { ...process.env, NO_COLOR: "1" } },
-        (error, stdout, stderr) =>
-          resolve({
-            code: error ? (typeof error.code === "number" ? error.code : null) : 0,
-            stdout,
-            stderr,
-          }),
+      execFile(process.execPath, [cli, ...args], { cwd }, (error, stdout, stderr) =>
+        resolve({
+          code: error ? (typeof error.code === "number" ? error.code : null) : 0,
+          stdout,
+          stderr,
+        }),
       );
     })
   );

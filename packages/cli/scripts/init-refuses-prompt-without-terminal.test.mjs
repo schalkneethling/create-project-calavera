@@ -33,7 +33,6 @@ async function exists(path) {
 function runWithoutTerminal(cwd, args) {
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd,
-    env: { ...process.env, NO_COLOR: "1" },
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
     timeout: 60_000,

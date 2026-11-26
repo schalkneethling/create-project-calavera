@@ -54,7 +54,6 @@ async function runCli(args, cwd) {
   return execFileAsync(process.execPath, [cliBin, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
 }
 

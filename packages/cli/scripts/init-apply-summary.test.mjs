@@ -44,7 +44,6 @@ const initArguments = [
 function runCli(root, args) {
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd: root,
-    env: { ...process.env, NO_COLOR: "1" },
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
     timeout: 60_000,

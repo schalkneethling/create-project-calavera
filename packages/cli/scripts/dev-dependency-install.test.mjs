@@ -113,7 +113,6 @@ function runCli(workspace, args, env = {}) {
         timeout: CLI_TIMEOUT_MS,
         env: {
           ...process.env,
-          NO_COLOR: "1",
           PATH: `${workspace.bin}${delimiter}${process.env.PATH ?? ""}`,
           STUB_LOG: workspace.packageManagerLog,
           ...env,

@@ -49,7 +49,6 @@ async function writeRecipe(recipe) {
 function runDoctor() {
   const { status, stdout, stderr } = spawnSync(process.execPath, [cli, "doctor", "--json"], {
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
   });
   return { status, stdout, stderr };
 }
@@ -195,7 +194,6 @@ test("Given a legacy entry selects the guard, doctor names the same entries and 
 
     const apply = spawnSync(process.execPath, [cli, "apply", "--dry-run", "--json"], {
       encoding: "utf8",
-      env: { ...process.env, NO_COLOR: "1" },
     });
     assert.notEqual(apply.status, 0, apply.stdout);
     const [, applyDetails] =

@@ -306,7 +306,7 @@ test("an update command that fails leaves the notice without the dependency sent
 
 test("every test entry point that runs the CLI loads the setup module that turns the check off", async () => {
   // ADR-0019 Decision 7: the suite turns the check off once, so no test asks a registry for latest.
-  const setup = "./scripts/no-version-check.mjs";
+  const setup = "./scripts/test-environment.mjs";
   const cliPackage = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
@@ -330,7 +330,7 @@ test("every test entry point that runs the CLI loads the setup module that turns
   const before = process.env.CALAVERA_NO_VERSION_CHECK;
   delete process.env.CALAVERA_NO_VERSION_CHECK;
   try {
-    await import(`../scripts/no-version-check.mjs?${Date.now()}`);
+    await import(`../scripts/test-environment.mjs?${Date.now()}`);
     assert.equal(isVersionCheckDisabled(process.env), true);
   } finally {
     if (before === undefined) delete process.env.CALAVERA_NO_VERSION_CHECK;
