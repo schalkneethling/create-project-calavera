@@ -8,6 +8,8 @@
 
 ## 0. Current Increment
 
+**Since 28 November 2026,** this section is a record of the `cli-experience` release, which shipped as 7.0.0 on 27 November 2026. The current release is its kickoff issue: `gh issue list --label release-kickoff` (#1358). #1353 tracks removing this file.
+
 This section is the live plan. The briefs describe where the projects end up; this section says what is being worked now. It is rewritten at the end of each increment. Work only the current increment; anything else noticed becomes an issue.
 
 **Current increment: the `cli-experience` release.** Increment 1 ended when handoff H0 was delivered on 7 November 2026. The owner chose this release's issues on 2026-11-13, and its name, goal, and exit condition on 2026-11-14.
