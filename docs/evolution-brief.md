@@ -13,7 +13,7 @@ For an orchestrating agent:
 1. Copy this file to `docs/evolution-brief.md` in the Calavera repository and link it from the root `AGENTS.md`.
 2. Treat Section 3 (Decisions) as settled. Do not reopen a decision in a PR; open a decision issue instead and stop.
 3. Treat Section 4 (Open Questions) as spikes. Each spike produces an ADR under `docs/adr/` and a recommendation; implementation waits for the ADR to be accepted.
-4. The live plan is `docs/cross-repo/sequencing-map.md` Section 0 (current increment); work only that. The phases in Section 6 are the long-horizon order, not a to-do list. Phase 0 (the catalog audit) gates everything after it. Each issue is one PR. Each PR answers one primary review question. Halt at every `CHECKPOINT` and wait for review and merge before continuing.
+4. The live plan is the current release's kickoff issue (`gh issue list --label release-kickoff`); work only that. The phases in Section 6 are the long-horizon order, not a to-do list. Phase 0 (the catalog audit) gates everything after it. Each issue is one PR. Each PR answers one primary review question. Halt at every `CHECKPOINT` and wait for review and merge before continuing.
 5. Anything css-evolve depends on is listed in `docs/cross-repo/interface-contract.md` with a freeze point. Do not change a frozen surface; write a cross-repo request instead (see `AGENTS.md`).
 6. Never announce completion of a phase without the acceptance criteria passing in CI.
 7. When this brief and the code disagree, the brief is the intent; open an issue rather than silently choosing.

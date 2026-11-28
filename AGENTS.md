@@ -16,7 +16,7 @@ Calavera is what runs after `vp create`: Baseline target, CSS verification (css-
 ## Session start (read, do not import)
 
 1. Where the last session stopped: `gh pr list`, `git status`, `git worktree list`, and `git stash list`. The tracker and the files below are the record; there is no separate status file.
-2. The current release's kickoff issue: `gh issue list --label release-kickoff`. Work only that release; anything else you notice becomes a backlog issue. `docs/cross-repo/sequencing-map.md` holds the handoff timeline with css-evolve.
+2. The current release's kickoff issue: `gh issue list --label release-kickoff`. Work only that release; anything else you notice becomes a backlog issue (see Releases). If no kickoff issue is open, or more than one is, ask the owner which release is current before starting release work. `docs/cross-repo/sequencing-map.md` holds the handoff timeline with css-evolve.
 3. `docs/cross-repo/requests/` — open requests and responses.
 4. `docs/evolution-brief.md` — decisions, spikes, phases, checkpoints. Consult when a decision's rationale or an issue's acceptance criteria are needed.
 5. `docs/cross-repo/interface-contract.md` — before touching any surface shared with css-evolve.
@@ -31,15 +31,15 @@ Calavera is what runs after `vp create`: Baseline target, CSS verification (css-
 - One issue, one PR, one primary review question named in the description. Test first. `vp` is the command runner.
 - Frozen surfaces in the interface contract change only via a cross-repo request and a version bump.
 - Needs from css-evolve are never worked around: write `docs/cross-repo/requests/YYYY-MM-DD-<slug>.md` from `docs/cross-repo/request-template.md`, comment on the issue that it is blocked and link the request, continue with unblocked work.
-- Halt at every `CHECKPOINT` and at the increment exit condition; summarize evidence and stop. Do not reopen settled decisions in a PR; open a decision issue.
+- Halt at every `CHECKPOINT` and at the release's exit condition; summarize evidence and stop. Do not reopen settled decisions in a PR; open a decision issue.
 - Prose and docs: MDN style guide, American spelling, no contractions in body prose.
 
 ## Releases
 
-- A release starts from one kickoff issue, labeled `release-kickoff` and with the release's `milestone: <name>` label, written in one sitting: the goal, the exit condition, the issue list (frozen at kickoff), the expected bump, the target date, and the decisions that would block work, settled before work starts.
-- A new finding goes to the backlog without a milestone label. It joins the release only if the release caused the regression or the finding blocks the exit condition. Breaking removals wait for a release planned to collect them.
+- A release starts from one kickoff issue with the `release-kickoff` label and the release's `milestone: <name>` label. Write it in one sitting. It records the goal, the exit condition, the issue list (frozen at kickoff), the expected bump, and the target date, and it settles every decision that would block work before work starts.
+- A new finding goes to the backlog, without the current release's `milestone:` label. It joins the release only if the release caused the regression or the finding blocks the exit condition. Breaking removals wait for a release planned to collect them.
 - Ownership is shared. Decide what follows from these rules, an ADR, an earlier decision, or consistency, and record why on the issue. Ask the owner only when something is unclear or ambiguous, a matter of taste, outward-facing or hard to undo, or when a second opinion would help.
-- Halfway through a release, the owner runs `pnpm release:rehearse` and `pnpm release:rehearse:cli` in their own terminal, so release-only failures surface before release day.
+- When about half of the release's issues are closed, ask the owner to run `pnpm release:rehearse` and `pnpm release:rehearse:cli` in their own terminal, so release-only failures surface before release day. The second command needs the Node.js and Bun versions in `scripts/rehearsal-pins.json` and names any that are missing.
 - Before telling the owner to do something, read the code that decides it. Verify a subagent's claim before acting on it.
 
 ## Session end
@@ -51,4 +51,4 @@ Record decisions on the issue they belong to, and delivered handoffs in the sequ
 
 ## Issues and labels
 
-`gh issue create --template cal.md`. Labels: `calavera-evolution`; add `removal`, `handoff`, `dogfood` as applicable.
+`gh issue create --template cal.md`. Labels: `calavera-evolution`; add `removal`, `handoff`, `dogfood` as applicable. A release's kickoff issue also gets `release-kickoff`.
